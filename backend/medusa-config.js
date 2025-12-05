@@ -62,7 +62,7 @@ const medusaConfig = {
               endPoint: MINIO_ENDPOINT,
               accessKey: MINIO_ACCESS_KEY,
               secretKey: MINIO_SECRET_KEY,
-              bucket: MINIO_BUCKET // Optional, default: medusa-media
+              bucket: MINIO_BUCKET 
             }
           }] : [{
             resolve: '@medusajs/file-local',
@@ -117,22 +117,36 @@ const medusaConfig = {
         ]
       }
     }] : []),
-    ...(STRIPE_API_KEY && STRIPE_WEBHOOK_SECRET ? [{
+    
+    // --- INICIO DE MODIFICACIÓN DE PAGOS ---
+    // Quitamos la condición externa para que MercadoPago cargue SIEMPRE
+    {
       key: Modules.PAYMENT,
       resolve: '@medusajs/payment',
       options: {
         providers: [
+          // 1. MercadoPago (Agregado Fijo)
           {
+            resolve: "./src/services/mercadopago-provider.ts",
+            id: "mercadopago",
+            options: {
+              access_token: process.env.MERCADOPAGO_ACCESS_TOKEN,
+              public_key: process.env.MERCADOPAGO_PUBLIC_KEY,
+            },
+          },
+          // 2. Stripe (Condicional: Solo si existen las claves en constants)
+          ...(STRIPE_API_KEY && STRIPE_WEBHOOK_SECRET ? [{
             resolve: '@medusajs/payment-stripe',
             id: 'stripe',
             options: {
               apiKey: STRIPE_API_KEY,
               webhookSecret: STRIPE_WEBHOOK_SECRET,
             },
-          },
+          }] : []),
         ],
       },
-    }] : [])
+    }
+    // --- FIN DE MODIFICACIÓN DE PAGOS ---
   ],
   plugins: [
   ...(MEILISEARCH_HOST && MEILISEARCH_ADMIN_KEY ? [{
