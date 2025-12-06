@@ -3,7 +3,10 @@ import { loadEnv, Modules, defineConfig } from '@medusajs/utils';
 // Cargamos las variables de entorno
 loadEnv(process.env.NODE_ENV, process.cwd());
 
+const BASE_DIR = process.env.NODE_ENV === "production" ? "dist" : "src";
+
 const medusaConfig = {
+
   projectConfig: {
     // Usamos las variables directas de Railway
     databaseUrl: process.env.DATABASE_URL,
