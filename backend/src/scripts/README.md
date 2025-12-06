@@ -2,8 +2,6 @@
 
 A custom CLI script is a function to execute through Medusa's CLI tool. This is useful when creating custom Medusa tooling to run as a CLI tool.
 
-> Learn more about custom CLI scripts in [this documentation](https://docs.medusajs.com/learn/fundamentals/custom-cli-scripts).
-
 ## How to Create a Custom CLI Script?
 
 To create a custom CLI script, create a TypeScript or JavaScript file under the `src/scripts` directory. The file must default export a function.
@@ -13,14 +11,17 @@ For example, create the file `src/scripts/my-script.ts` with the following conte
 ```ts title="src/scripts/my-script.ts"
 import { 
   ExecArgs,
-} from "@medusajs/framework/types"
+  IProductModuleService
+} from "@medusajs/types"
+import { ModuleRegistrationName } from "@medusajs/utils"
 
 export default async function myScript ({
   container
 }: ExecArgs) {
-  const productModuleService = container.resolve("product")
+  const productModuleService: IProductModuleService = 
+    container.resolve(ModuleRegistrationName.PRODUCT)
 
-  const [, count] = await productModuleService.listAndCountProducts()
+  const [, count] = await productModuleService.listAndCount()
 
   console.log(`You have ${count} product(s)`)
 }
@@ -47,7 +48,7 @@ Your script can accept arguments from the command line. Arguments are passed to 
 For example:
 
 ```ts
-import { ExecArgs } from "@medusajs/framework/types"
+import { ExecArgs } from "@medusajs/types"
 
 export default async function myScript ({
   args
