@@ -107,7 +107,7 @@ const medusaConfig = {
         providers: [
           // MercadoPago SIEMPRE ACTIVO
           {
-            resolve: "./dist/services/mercadopago-provider.js",
+            resolve: "./src/services/mercadopago-provider",
             id: "mercadopago",
             options: {
               access_token: process.env.MERCADOPAGO_ACCESS_TOKEN,
