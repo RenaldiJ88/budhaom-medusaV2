@@ -117,22 +117,35 @@ const medusaConfig = {
         ]
       }
     }] : []),
-    ...(STRIPE_API_KEY && STRIPE_WEBHOOK_SECRET ? [{
+    
+    // --- CAMBIO IMPORTANTE AQUÍ ---
+    // Sacamos la condición externa para que MercadoPago funcione aunque no haya Stripe
+    {
       key: Modules.PAYMENT,
       resolve: '@medusajs/payment',
       options: {
         providers: [
+          // 1. MercadoPago (Siempre activo)
           {
+            resolve: "./src/services/mercadopago-provider.ts",
+            id: "mercadopago",
+            options: {
+              access_token: process.env.MERCADOPAGO_ACCESS_TOKEN,
+              public_key: process.env.MERCADOPAGO_PUBLIC_KEY,
+            },
+          },
+          // 2. Stripe (Solo si hay claves)
+          ...(STRIPE_API_KEY && STRIPE_WEBHOOK_SECRET ? [{
             resolve: '@medusajs/payment-stripe',
             id: 'stripe',
             options: {
               apiKey: STRIPE_API_KEY,
               webhookSecret: STRIPE_WEBHOOK_SECRET,
             },
-          },
+          }] : []),
         ],
       },
-    }] : [])
+    }
   ],
   plugins: [
   ...(MEILISEARCH_HOST && MEILISEARCH_ADMIN_KEY ? [{
