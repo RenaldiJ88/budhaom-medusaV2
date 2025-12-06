@@ -3,10 +3,12 @@ import { loadEnv, Modules, defineConfig } from '@medusajs/utils';
 // Cargamos las variables de entorno
 loadEnv(process.env.NODE_ENV, process.cwd());
 
+// ⚠️ LÓGICA CRÍTICA PARA RAILWAY vs LOCAL
+// Si estamos en producción, usamos la carpeta compilada 'dist'.
+// Si estamos en local, usamos la carpeta fuente 'src'.
 const BASE_DIR = process.env.NODE_ENV === "production" ? "dist" : "src";
 
 const medusaConfig = {
-
   projectConfig: {
     // Usamos las variables directas de Railway
     databaseUrl: process.env.DATABASE_URL,
@@ -38,7 +40,8 @@ const medusaConfig = {
       options: {
         providers: [
           ...(process.env.MINIO_ENDPOINT && process.env.MINIO_ACCESS_KEY && process.env.MINIO_SECRET_KEY ? [{
-            resolve: './src/modules/minio-file',
+            // CORREGIDO: Usa BASE_DIR
+            resolve: `./${BASE_DIR}/modules/minio-file`,
             id: 'minio',
             options: {
               endPoint: process.env.MINIO_ENDPOINT,
@@ -90,7 +93,8 @@ const medusaConfig = {
             }
           }] : []),
           ...(process.env.RESEND_API_KEY ? [{
-            resolve: './src/modules/email-notifications',
+            // CORREGIDO: Usa BASE_DIR
+            resolve: `./${BASE_DIR}/modules/email-notifications`,
             id: 'resend',
             options: {
               channels: ['email'],
@@ -110,7 +114,8 @@ const medusaConfig = {
         providers: [
           // MercadoPago SIEMPRE ACTIVO
           {
-            resolve: "./src/services/mercadopago-provider",
+            // CORREGIDO: Usa BASE_DIR y quitamos la extensión .js
+            resolve: `./${BASE_DIR}/services/mercadopago-provider`,
             id: "mercadopago",
             options: {
               access_token: process.env.MERCADOPAGO_ACCESS_TOKEN,
