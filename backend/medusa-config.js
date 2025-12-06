@@ -1,43 +1,21 @@
 import { loadEnv, Modules, defineConfig } from '@medusajs/utils';
-import {
-  ADMIN_CORS,
-  AUTH_CORS,
-  BACKEND_URL,
-  COOKIE_SECRET,
-  DATABASE_URL,
-  JWT_SECRET,
-  REDIS_URL,
-  RESEND_API_KEY,
-  RESEND_FROM_EMAIL,
-  SENDGRID_API_KEY,
-  SENDGRID_FROM_EMAIL,
-  SHOULD_DISABLE_ADMIN,
-  STORE_CORS,
-  STRIPE_API_KEY,
-  STRIPE_WEBHOOK_SECRET,
-  WORKER_MODE,
-  MINIO_ENDPOINT,
-  MINIO_ACCESS_KEY,
-  MINIO_SECRET_KEY,
-  MINIO_BUCKET,
-  MEILISEARCH_HOST,
-  MEILISEARCH_ADMIN_KEY
-} from 'lib/constants';
 
+// Cargamos las variables de entorno
 loadEnv(process.env.NODE_ENV, process.cwd());
 
 const medusaConfig = {
   projectConfig: {
-    databaseUrl: DATABASE_URL,
+    // Usamos las variables directas de Railway
+    databaseUrl: process.env.DATABASE_URL,
     databaseLogging: false,
-    redisUrl: REDIS_URL,
-    workerMode: WORKER_MODE,
+    redisUrl: process.env.REDIS_URL,
+    workerMode: process.env.WORKER_MODE || "shared",
     http: {
-      adminCors: ADMIN_CORS,
-      authCors: AUTH_CORS,
-      storeCors: STORE_CORS,
-      jwtSecret: JWT_SECRET,
-      cookieSecret: COOKIE_SECRET
+      adminCors: process.env.ADMIN_CORS,
+      authCors: process.env.AUTH_CORS,
+      storeCors: process.env.STORE_CORS,
+      jwtSecret: process.env.JWT_SECRET || "supersecret",
+      cookieSecret: process.env.COOKIE_SECRET || "supersecret"
     },
     build: {
       rollupOptions: {
@@ -46,40 +24,42 @@ const medusaConfig = {
     }
   },
   admin: {
-    backendUrl: BACKEND_URL,
-    disable: SHOULD_DISABLE_ADMIN,
+    backendUrl: process.env.BACKEND_URL || "https://budhaom-production.up.railway.app",
+    disable: process.env.SHOULD_DISABLE_ADMIN === "true",
   },
   modules: [
+    // 1. Módulo de Archivos (MinIO o Local)
     {
       key: Modules.FILE,
       resolve: '@medusajs/file',
       options: {
         providers: [
-          ...(MINIO_ENDPOINT && MINIO_ACCESS_KEY && MINIO_SECRET_KEY ? [{
+          ...(process.env.MINIO_ENDPOINT && process.env.MINIO_ACCESS_KEY && process.env.MINIO_SECRET_KEY ? [{
             resolve: './src/modules/minio-file',
             id: 'minio',
             options: {
-              endPoint: MINIO_ENDPOINT,
-              accessKey: MINIO_ACCESS_KEY,
-              secretKey: MINIO_SECRET_KEY,
-              bucket: MINIO_BUCKET // Optional, default: medusa-media
+              endPoint: process.env.MINIO_ENDPOINT,
+              accessKey: process.env.MINIO_ACCESS_KEY,
+              secretKey: process.env.MINIO_SECRET_KEY,
+              bucket: process.env.MINIO_BUCKET // Optional, default: medusa-media
             }
           }] : [{
             resolve: '@medusajs/file-local',
             id: 'local',
             options: {
               upload_dir: 'static',
-              backend_url: `${BACKEND_URL}/static`
+              backend_url: `${process.env.BACKEND_URL || "http://localhost:9000"}/static`
             }
           }])
         ]
       }
     },
-    ...(REDIS_URL ? [{
+    // 2. Redis (Eventos y Workflow)
+    ...(process.env.REDIS_URL ? [{
       key: Modules.EVENT_BUS,
       resolve: '@medusajs/event-bus-redis',
       options: {
-        redisUrl: REDIS_URL
+        redisUrl: process.env.REDIS_URL
       }
     },
     {
@@ -87,45 +67,45 @@ const medusaConfig = {
       resolve: '@medusajs/workflow-engine-redis',
       options: {
         redis: {
-          url: REDIS_URL,
+          url: process.env.REDIS_URL,
         }
       }
     }] : []),
-    ...(SENDGRID_API_KEY && SENDGRID_FROM_EMAIL || RESEND_API_KEY && RESEND_FROM_EMAIL ? [{
+    // 3. Notificaciones (Email)
+    ...(process.env.SENDGRID_API_KEY || process.env.RESEND_API_KEY ? [{
       key: Modules.NOTIFICATION,
       resolve: '@medusajs/notification',
       options: {
         providers: [
-          ...(SENDGRID_API_KEY && SENDGRID_FROM_EMAIL ? [{
+          ...(process.env.SENDGRID_API_KEY ? [{
             resolve: '@medusajs/notification-sendgrid',
             id: 'sendgrid',
             options: {
               channels: ['email'],
-              api_key: SENDGRID_API_KEY,
-              from: SENDGRID_FROM_EMAIL,
+              api_key: process.env.SENDGRID_API_KEY,
+              from: process.env.SENDGRID_FROM_EMAIL,
             }
           }] : []),
-          ...(RESEND_API_KEY && RESEND_FROM_EMAIL ? [{
+          ...(process.env.RESEND_API_KEY ? [{
             resolve: './src/modules/email-notifications',
             id: 'resend',
             options: {
               channels: ['email'],
-              api_key: RESEND_API_KEY,
-              from: RESEND_FROM_EMAIL,
+              api_key: process.env.RESEND_API_KEY,
+              from: process.env.RESEND_FROM_EMAIL,
             },
           }] : []),
         ]
       }
     }] : []),
     
-    // --- CAMBIO IMPORTANTE AQUÍ ---
-    // Sacamos la condición externa para que MercadoPago funcione aunque no haya Stripe
+    // 4. PAGOS (MercadoPago + Stripe)
     {
       key: Modules.PAYMENT,
       resolve: '@medusajs/payment',
       options: {
         providers: [
-          // 1. MercadoPago (Siempre activo)
+          // MercadoPago SIEMPRE ACTIVO
           {
             resolve: "./src/services/mercadopago-provider.ts",
             id: "mercadopago",
@@ -134,13 +114,13 @@ const medusaConfig = {
               public_key: process.env.MERCADOPAGO_PUBLIC_KEY,
             },
           },
-          // 2. Stripe (Solo si hay claves)
-          ...(STRIPE_API_KEY && STRIPE_WEBHOOK_SECRET ? [{
+          // Stripe (Solo si hay claves)
+          ...(process.env.STRIPE_API_KEY ? [{
             resolve: '@medusajs/payment-stripe',
             id: 'stripe',
             options: {
-              apiKey: STRIPE_API_KEY,
-              webhookSecret: STRIPE_WEBHOOK_SECRET,
+              apiKey: process.env.STRIPE_API_KEY,
+              webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
             },
           }] : []),
         ],
@@ -148,12 +128,12 @@ const medusaConfig = {
     }
   ],
   plugins: [
-  ...(MEILISEARCH_HOST && MEILISEARCH_ADMIN_KEY ? [{
+  ...(process.env.MEILISEARCH_HOST ? [{
       resolve: '@rokmohar/medusa-plugin-meilisearch',
       options: {
         config: {
-          host: MEILISEARCH_HOST,
-          apiKey: MEILISEARCH_ADMIN_KEY
+          host: process.env.MEILISEARCH_HOST,
+          apiKey: process.env.MEILISEARCH_ADMIN_KEY
         },
         settings: {
           products: {
