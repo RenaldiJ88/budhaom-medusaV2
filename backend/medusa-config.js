@@ -1,29 +1,24 @@
 import { loadEnv, Modules, defineConfig } from '@medusajs/utils';
-import { existsSync } from 'fs';
 import path from 'path';
 
 // Cargamos las variables de entorno
 loadEnv(process.env.NODE_ENV, process.cwd());
 
-// --- LÓGICA DE DETECCIÓN INTELIGENTE DE CARPETA ---
-const isProduction = process.env.NODE_ENV === "production";
-let BASE_DIR = "src";
+// --- CONFIGURACIÓN DE RUTAS ---
+// Detectamos si estamos en Railway explícitamente
+const isRailway = process.env.RAILWAY_ENVIRONMENT_NAME !== undefined || process.env.RAILWAY_SERVICE_NAME !== undefined;
+const isProduction = process.env.NODE_ENV === "production" || isRailway;
 
-if (isProduction) {
-  // En producción, buscamos dónde puso los archivos el compilador.
-  // Prioridad 1: .medusa/server (El estándar de Medusa CLI)
-  if (existsSync(path.resolve(process.cwd(), '.medusa/server'))) {
-    BASE_DIR = ".medusa/server";
-  } 
-  // Prioridad 2: dist (Si usaste tsc directamente)
-  else if (existsSync(path.resolve(process.cwd(), 'dist'))) {
-    BASE_DIR = "dist";
-  }
-}
+// En Medusa v2, el build estándar va a ".medusa/server"
+// En local, trabajamos sobre "src"
+const BASE_DIR = isProduction ? ".medusa/server" : "src";
 
-// Log para depuración en Railway (Busca esto en tus logs si falla)
-console.log(`[Medusa Config] Modo: ${process.env.NODE_ENV} | Carpeta base detectada: ${BASE_DIR}`);
-// ---------------------------------------------------
+// Usamos path.resolve para crear RUTAS ABSOLUTAS y evitar errores de "./"
+const resolveModule = (relativePath) => path.resolve(process.cwd(), BASE_DIR, relativePath);
+
+console.log(`[Medusa Config] Environment: ${isProduction ? 'PRODUCTION (Railway)' : 'LOCAL'}`);
+console.log(`[Medusa Config] Base Dir: ${BASE_DIR}`);
+// -----------------------------
 
 const medusaConfig = {
   projectConfig: {
@@ -56,7 +51,8 @@ const medusaConfig = {
       options: {
         providers: [
           ...(process.env.MINIO_ENDPOINT && process.env.MINIO_ACCESS_KEY && process.env.MINIO_SECRET_KEY ? [{
-            resolve: `./${BASE_DIR}/modules/minio-file`,
+            // CORREGIDO: Usamos ruta absoluta a .medusa/server/modules/minio-file
+            resolve: resolveModule('modules/minio-file'),
             id: 'minio',
             options: {
               endPoint: process.env.MINIO_ENDPOINT,
@@ -108,7 +104,8 @@ const medusaConfig = {
             }
           }] : []),
           ...(process.env.RESEND_API_KEY ? [{
-            resolve: `./${BASE_DIR}/modules/email-notifications`,
+             // CORREGIDO: Ruta absoluta
+            resolve: resolveModule('modules/email-notifications'),
             id: 'resend',
             options: {
               channels: ['email'],
@@ -128,8 +125,8 @@ const medusaConfig = {
         providers: [
           // MercadoPago SIEMPRE ACTIVO
           {
-            // Usamos la carpeta detectada dinámicamente
-            resolve: `./${BASE_DIR}/services/mercadopago-provider`,
+            // CORREGIDO: Ruta absoluta
+            resolve: resolveModule('services/mercadopago-provider'),
             id: "mercadopago",
             options: {
               access_token: process.env.MERCADOPAGO_ACCESS_TOKEN,
