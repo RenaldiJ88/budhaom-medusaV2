@@ -5,22 +5,15 @@ import path from 'path';
 loadEnv(process.env.NODE_ENV, process.cwd());
 
 // --- CONFIGURACIÓN DE RUTAS ---
-// Detectamos si estamos en Railway explícitamente
-const isRailway = process.env.RAILWAY_ENVIRONMENT_NAME !== undefined || process.env.RAILWAY_SERVICE_NAME !== undefined;
-const isProduction = process.env.NODE_ENV === "production" || isRailway;
+// Simplificamos: Asumimos que la estructura siempre requiere entrar a 'src'
+// o que el compilador mantuvo la carpeta 'src' dentro del build.
+const BASE_DIR = "src";
 
-// CORRECCIÓN CRÍTICA:
-// En Producción (Railway), Medusa ejecuta el servidor DESDE la carpeta compilada.
-// Por lo tanto, no necesitamos navegar a ".medusa/server" porque YA ESTAMOS ahí.
-// Usamos "." (punto) para referirnos al directorio actual.
-const BASE_DIR = isProduction ? "." : "src";
-
-// Resolvemos la ruta absoluta
+// Función helper para resolver rutas absolutas de forma segura
 const resolveModule = (relativePath) => path.resolve(process.cwd(), BASE_DIR, relativePath);
 
-console.log(`[Medusa Config] Environment: ${isProduction ? 'PRODUCTION (Railway)' : 'LOCAL'}`);
-console.log(`[Medusa Config] Base Dir (Internal): ${BASE_DIR}`);
 console.log(`[Medusa Config] CWD: ${process.cwd()}`);
+console.log(`[Medusa Config] Resolving modules relative to: ${path.resolve(process.cwd(), BASE_DIR)}`);
 // -----------------------------
 
 const medusaConfig = {
@@ -54,6 +47,7 @@ const medusaConfig = {
       options: {
         providers: [
           ...(process.env.MINIO_ENDPOINT && process.env.MINIO_ACCESS_KEY && process.env.MINIO_SECRET_KEY ? [{
+            // Resolvemos hacia ./src/modules/minio-file
             resolve: resolveModule('modules/minio-file'),
             id: 'minio',
             options: {
@@ -73,7 +67,7 @@ const medusaConfig = {
         ]
       }
     },
-    // 2. Redis (Eventos y Workflow)
+    // 2. Redis
     ...(process.env.REDIS_URL ? [{
       key: Modules.EVENT_BUS,
       resolve: '@medusajs/event-bus-redis',
@@ -90,7 +84,7 @@ const medusaConfig = {
         }
       }
     }] : []),
-    // 3. Notificaciones (Email)
+    // 3. Notificaciones
     ...(process.env.SENDGRID_API_KEY || process.env.RESEND_API_KEY ? [{
       key: Modules.NOTIFICATION,
       resolve: '@medusajs/notification',
@@ -106,6 +100,7 @@ const medusaConfig = {
             }
           }] : []),
           ...(process.env.RESEND_API_KEY ? [{
+            // Resolvemos hacia ./src/modules/email-notifications
             resolve: resolveModule('modules/email-notifications'),
             id: 'resend',
             options: {
@@ -124,8 +119,9 @@ const medusaConfig = {
       resolve: '@medusajs/payment',
       options: {
         providers: [
-          // MercadoPago SIEMPRE ACTIVO
+          // MercadoPago
           {
+            // Resolvemos hacia ./src/services/mercadopago-provider
             resolve: resolveModule('services/mercadopago-provider'),
             id: "mercadopago",
             options: {
@@ -133,7 +129,7 @@ const medusaConfig = {
               public_key: process.env.MERCADOPAGO_PUBLIC_KEY,
             },
           },
-          // Stripe (Solo si hay claves)
+          // Stripe
           ...(process.env.STRIPE_API_KEY ? [{
             resolve: '@medusajs/payment-stripe',
             id: 'stripe',
