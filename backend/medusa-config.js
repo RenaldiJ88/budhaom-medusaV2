@@ -1,16 +1,32 @@
 import { loadEnv, Modules, defineConfig } from '@medusajs/utils';
+import { existsSync } from 'fs';
+import path from 'path';
 
 // Cargamos las variables de entorno
 loadEnv(process.env.NODE_ENV, process.cwd());
 
-// ⚠️ LÓGICA CRÍTICA PARA RAILWAY vs LOCAL
-// Si estamos en producción, usamos la carpeta compilada 'dist'.
-// Si estamos en local, usamos la carpeta fuente 'src'.
-const BASE_DIR = process.env.NODE_ENV === "production" ? "dist" : "src";
+// --- LÓGICA DE DETECCIÓN INTELIGENTE DE CARPETA ---
+const isProduction = process.env.NODE_ENV === "production";
+let BASE_DIR = "src";
+
+if (isProduction) {
+  // En producción, buscamos dónde puso los archivos el compilador.
+  // Prioridad 1: .medusa/server (El estándar de Medusa CLI)
+  if (existsSync(path.resolve(process.cwd(), '.medusa/server'))) {
+    BASE_DIR = ".medusa/server";
+  } 
+  // Prioridad 2: dist (Si usaste tsc directamente)
+  else if (existsSync(path.resolve(process.cwd(), 'dist'))) {
+    BASE_DIR = "dist";
+  }
+}
+
+// Log para depuración en Railway (Busca esto en tus logs si falla)
+console.log(`[Medusa Config] Modo: ${process.env.NODE_ENV} | Carpeta base detectada: ${BASE_DIR}`);
+// ---------------------------------------------------
 
 const medusaConfig = {
   projectConfig: {
-    // Usamos las variables directas de Railway
     databaseUrl: process.env.DATABASE_URL,
     databaseLogging: false,
     redisUrl: process.env.REDIS_URL,
@@ -40,14 +56,13 @@ const medusaConfig = {
       options: {
         providers: [
           ...(process.env.MINIO_ENDPOINT && process.env.MINIO_ACCESS_KEY && process.env.MINIO_SECRET_KEY ? [{
-            // CORREGIDO: Usa BASE_DIR
             resolve: `./${BASE_DIR}/modules/minio-file`,
             id: 'minio',
             options: {
               endPoint: process.env.MINIO_ENDPOINT,
               accessKey: process.env.MINIO_ACCESS_KEY,
               secretKey: process.env.MINIO_SECRET_KEY,
-              bucket: process.env.MINIO_BUCKET // Optional, default: medusa-media
+              bucket: process.env.MINIO_BUCKET 
             }
           }] : [{
             resolve: '@medusajs/file-local',
@@ -93,7 +108,6 @@ const medusaConfig = {
             }
           }] : []),
           ...(process.env.RESEND_API_KEY ? [{
-            // CORREGIDO: Usa BASE_DIR
             resolve: `./${BASE_DIR}/modules/email-notifications`,
             id: 'resend',
             options: {
@@ -114,7 +128,7 @@ const medusaConfig = {
         providers: [
           // MercadoPago SIEMPRE ACTIVO
           {
-            // CORREGIDO: Usa BASE_DIR y quitamos la extensión .js
+            // Usamos la carpeta detectada dinámicamente
             resolve: `./${BASE_DIR}/services/mercadopago-provider`,
             id: "mercadopago",
             options: {
