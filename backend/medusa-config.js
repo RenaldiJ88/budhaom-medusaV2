@@ -1,20 +1,44 @@
 import { loadEnv, Modules, defineConfig } from '@medusajs/utils';
 import path from 'path';
+import fs from 'fs';
 
 // Cargamos las variables de entorno
 loadEnv(process.env.NODE_ENV, process.cwd());
 
-// --- CONFIGURACIÓN DE RUTAS ---
-// Simplificamos: Asumimos que la estructura siempre requiere entrar a 'src'
-// o que el compilador mantuvo la carpeta 'src' dentro del build.
-const BASE_DIR = "src";
+// --- BUSCADOR INTELIGENTE DE RUTAS ---
+// Esta función prueba múltiples carpetas hasta encontrar dónde están tus archivos.
+const findModulePath = (relativePath) => {
+  const cwd = process.cwd();
+  
+  // Lista de posibles carpetas donde el compilador pudo poner los archivos
+  const possibleRoots = [
+    "src",       // Local development
+    "dist",      // Producción estándar TS
+    ".",         // Producción aplanada (root)
+    "dist/src"   // Producción anidada
+  ];
 
-// Función helper para resolver rutas absolutas de forma segura
-const resolveModule = (relativePath) => path.resolve(process.cwd(), BASE_DIR, relativePath);
+  for (const root of possibleRoots) {
+    const fullPath = path.resolve(cwd, root, relativePath);
+    
+    // Verificamos si existe la carpeta (para módulos) o el archivo .js/.ts (para servicios)
+    if (fs.existsSync(fullPath) || 
+        fs.existsSync(fullPath + '.js') || 
+        fs.existsSync(fullPath + '.ts') ||
+        fs.existsSync(path.join(fullPath, 'index.js'))
+    ) {
+      console.log(`[Medusa Config] ✅ Encontrado: ${relativePath} en -> ${root}`);
+      return fullPath;
+    }
+  }
 
-console.log(`[Medusa Config] CWD: ${process.cwd()}`);
-console.log(`[Medusa Config] Resolving modules relative to: ${path.resolve(process.cwd(), BASE_DIR)}`);
-// -----------------------------
+  // Si no encuentra nada, devuelve una ruta por defecto y loguea el error
+  console.warn(`[Medusa Config] ⚠️ ALERTA: No se encontró ${relativePath} en ninguna carpeta común.`);
+  return path.resolve(cwd, "src", relativePath); // Fallback a src
+};
+// -------------------------------------
+
+console.log(`[Medusa Config] Iniciando en directorio: ${process.cwd()}`);
 
 const medusaConfig = {
   projectConfig: {
@@ -46,9 +70,9 @@ const medusaConfig = {
       resolve: '@medusajs/file',
       options: {
         providers: [
-          ...(process.env.MINIO_ENDPOINT && process.env.MINIO_ACCESS_KEY && process.env.MINIO_SECRET_KEY ? [{
-            // Resolvemos hacia ./src/modules/minio-file
-            resolve: resolveModule('modules/minio-file'),
+          ...(process.env.MINIO_ENDPOINT && process.env.MINIO_ACCESS_KEY ? [{
+            // Usamos el buscador
+            resolve: findModulePath('modules/minio-file'),
             id: 'minio',
             options: {
               endPoint: process.env.MINIO_ENDPOINT,
@@ -100,8 +124,8 @@ const medusaConfig = {
             }
           }] : []),
           ...(process.env.RESEND_API_KEY ? [{
-            // Resolvemos hacia ./src/modules/email-notifications
-            resolve: resolveModule('modules/email-notifications'),
+            // Usamos el buscador
+            resolve: findModulePath('modules/email-notifications'),
             id: 'resend',
             options: {
               channels: ['email'],
@@ -121,8 +145,8 @@ const medusaConfig = {
         providers: [
           // MercadoPago
           {
-            // Resolvemos hacia ./src/services/mercadopago-provider
-            resolve: resolveModule('services/mercadopago-provider'),
+            // Usamos el buscador
+            resolve: findModulePath('services/mercadopago-provider'),
             id: "mercadopago",
             options: {
               access_token: process.env.MERCADOPAGO_ACCESS_TOKEN,
