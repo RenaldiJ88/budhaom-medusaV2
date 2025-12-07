@@ -9,15 +9,18 @@ loadEnv(process.env.NODE_ENV, process.cwd());
 const isRailway = process.env.RAILWAY_ENVIRONMENT_NAME !== undefined || process.env.RAILWAY_SERVICE_NAME !== undefined;
 const isProduction = process.env.NODE_ENV === "production" || isRailway;
 
-// En Medusa v2, el build estándar va a ".medusa/server"
-// En local, trabajamos sobre "src"
-const BASE_DIR = isProduction ? ".medusa/server" : "src";
+// CORRECCIÓN CRÍTICA:
+// En Producción (Railway), Medusa ejecuta el servidor DESDE la carpeta compilada.
+// Por lo tanto, no necesitamos navegar a ".medusa/server" porque YA ESTAMOS ahí.
+// Usamos "." (punto) para referirnos al directorio actual.
+const BASE_DIR = isProduction ? "." : "src";
 
-// Usamos path.resolve para crear RUTAS ABSOLUTAS y evitar errores de "./"
+// Resolvemos la ruta absoluta
 const resolveModule = (relativePath) => path.resolve(process.cwd(), BASE_DIR, relativePath);
 
 console.log(`[Medusa Config] Environment: ${isProduction ? 'PRODUCTION (Railway)' : 'LOCAL'}`);
-console.log(`[Medusa Config] Base Dir: ${BASE_DIR}`);
+console.log(`[Medusa Config] Base Dir (Internal): ${BASE_DIR}`);
+console.log(`[Medusa Config] CWD: ${process.cwd()}`);
 // -----------------------------
 
 const medusaConfig = {
@@ -51,7 +54,6 @@ const medusaConfig = {
       options: {
         providers: [
           ...(process.env.MINIO_ENDPOINT && process.env.MINIO_ACCESS_KEY && process.env.MINIO_SECRET_KEY ? [{
-            // CORREGIDO: Usamos ruta absoluta a .medusa/server/modules/minio-file
             resolve: resolveModule('modules/minio-file'),
             id: 'minio',
             options: {
@@ -104,7 +106,6 @@ const medusaConfig = {
             }
           }] : []),
           ...(process.env.RESEND_API_KEY ? [{
-             // CORREGIDO: Ruta absoluta
             resolve: resolveModule('modules/email-notifications'),
             id: 'resend',
             options: {
@@ -125,7 +126,6 @@ const medusaConfig = {
         providers: [
           // MercadoPago SIEMPRE ACTIVO
           {
-            // CORREGIDO: Ruta absoluta
             resolve: resolveModule('services/mercadopago-provider'),
             id: "mercadopago",
             options: {
