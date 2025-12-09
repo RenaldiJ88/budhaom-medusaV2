@@ -23,6 +23,7 @@ import {
   MEILISEARCH_HOST,
   MEILISEARCH_ADMIN_KEY
 } from 'lib/constants';
+import path from 'path';
 
 loadEnv(process.env.NODE_ENV, process.cwd());
 
