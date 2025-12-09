@@ -14,8 +14,15 @@ export const MercadoPagoListener = ({ cart }: { cart: any }) => {
   const isMercadoPago = cart?.payment_session?.provider_id?.includes("mercadopago")
 
   useEffect(() => {
-    // Solo actuamos si es Mercado Pago, el estado es success y no estamos procesando ya
+    // AGREGA ESTOS LOGS:
+    console.log("👂 [LISTENER] Escuchando...", { 
+        isMercadoPago, 
+        paymentStatus, 
+        currentUrl: window.location.href 
+    })
+
     if (isMercadoPago && paymentStatus === "success" && !isProcessing) {
+      console.log("✅ [LISTENER] ¡Pago detectado! Iniciando completeOrder...")
       completeOrder()
     }
   }, [paymentStatus, isMercadoPago])
