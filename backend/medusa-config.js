@@ -130,7 +130,7 @@ const medusaConfig = {
           // --- MERCADOPAGO (LOCAL) ---
           {
             // Apuntamos directo al archivo en src, Railway maneja esto bien
-            resolve: './src/services/mercadopago-provider', 
+            resolve: path.resolve(__dirname, 'src/services/mercadopago-provider'),
             id: 'mercadopago',
             options: {
               access_token: process.env.MERCADOPAGO_ACCESS_TOKEN,
