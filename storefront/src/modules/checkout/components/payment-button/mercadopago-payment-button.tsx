@@ -2,7 +2,6 @@
 
 import { Button } from "@medusajs/ui"
 import { useState } from "react"
-import { useRouter } from "next/navigation"
 
 export const MercadoPagoPaymentButton = ({
   notReady,
@@ -14,73 +13,52 @@ export const MercadoPagoPaymentButton = ({
   session: any
 }) => {
   const [submitting, setSubmitting] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const router = useRouter()
+  
+  // 🔍 LOGS PARA DEPURAR EN EL NAVEGADOR
+  // Abre la consola con F12 y mira esto:
+  console.log("🎨 [FRONTEND] Estado notReady:", notReady)
+  console.log("🎨 [FRONTEND] Datos de sesión:", session)
+  console.log("🎨 [FRONTEND] Link encontrado:", session?.data?.init_point)
 
-  const handlePayment = async () => {
+  const handlePayment = () => {
     setSubmitting(true)
-    setErrorMessage(null)
 
-    try {
-      // 1. Obtenemos la URL del backend desde las variables de entorno o usamos localhost por defecto
-      const backendUrl = process.env.NEXT_PUBLIC_MEDUSA_BACKEND_URL || "http://localhost:9000"
+    // Buscamos el link que tu backend generó (el que vimos en el log 5)
+    const paymentLink = session?.data?.init_point || session?.data?.sandbox_init_point
 
-      // 2. Llamamos DIRECTAMENTE al endpoint de Medusa para completar el carrito
-      // Esto reemplaza a la función "placeOrder" que no encontrábamos
-      const response = await fetch(`${backendUrl}/store/carts/${cart.id}/complete`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // Si tu proyecto usa Publishable API Keys, el navegador suele enviarlas automáticamente si están configuradas globalmente,
-          // si te da error 401, avísame.
-        },
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.message || "Error al completar la orden")
-      }
-
-      // 3. ÉXITO: Manejamos la redirección
-      // Si la orden se creó (tipo "order"), vamos a la confirmación
-      if (data.type === "order") {
-        router.push(`/order/confirmed/${data.data.id}`)
-      } 
-      // Si el carrito sigue pendiente (tipo "cart"), puede que falte algo
-      else if (data.type === "cart") {
-         setErrorMessage("El carrito no se pudo completar. Intenta de nuevo.")
-         setSubmitting(false)
-      }
-
-    } catch (err: any) {
-      console.error(err)
-      setErrorMessage(err.message || "Error de conexión")
+    if (paymentLink) {
+      console.log("🚀 Redirigiendo a:", paymentLink)
+      window.location.href = paymentLink
+    } else {
+      console.error("❌ ERROR: El frontend no ve el link todavía.")
+      alert("Error: El link de pago no llegó al frontend. Revisa la consola (F12).")
       setSubmitting(false)
     }
   }
 
   return (
-    <>
+    <div className="flex flex-col gap-2">
       <Button
-        disabled={notReady || submitting}
+        // 🔥 AQUÍ ESTÁ EL CAMBIO: Quitamos "notReady" para que puedas hacer clic SIEMPRE
+        disabled={submitting} 
         onClick={handlePayment}
         size="large"
-        className="w-full mt-4"
+        className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white" // Le puse azul para que destaque
       >
         {submitting ? (
-          // Spinner manual (CSS) para no depender de librerías de iconos
           <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
         ) : (
-          "Pagar con Mercado Pago"
+          // Mostramos el texto dependiendo de si detectamos el link o no
+          session?.data?.init_point ? "PAGAR CON MERCADO PAGO (Listo)" : "PAGAR (Forzar click)"
         )}
       </Button>
-      
-      {errorMessage && (
-        <div className="text-red-500 text-small-regular mt-2">
-          {errorMessage}
-        </div>
+
+      {/* Mensaje de ayuda si el botón debería estar bloqueado */}
+      {notReady && (
+        <p className="text-xs text-orange-500 text-center">
+          Advertencia: Faltan datos de envío (notReady es true), pero el botón está desbloqueado para pruebas.
+        </p>
       )}
-    </>
+    </div>
   )
 }
