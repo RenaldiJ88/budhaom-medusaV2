@@ -43,8 +43,20 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
 
     try {
       // 1. OBTENCIÓN Y VALIDACIÓN DE VARIABLES
-      const storeUrl = process.env.STORE_URL || "http://localhost:8000";
+      let storeUrl = process.env.STORE_URL || "http://localhost:8000";
       
+      // ---------------------------------------------------------
+      // 🔥 FIX CRÍTICO: FORZAR /ar EN LA URL
+      // Detectamos si falta el /ar y lo agregamos a la fuerza.
+      // Esto evita que Next.js haga redirecciones que borren los datos del pago.
+      // ---------------------------------------------------------
+      if (!storeUrl.includes("/ar") && !storeUrl.includes("localhost")) {
+         // Eliminamos barra final si existe para evitar dobles barras //ar
+         if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
+         storeUrl = `${storeUrl}/ar`;
+         console.log("🔥 [MP-FIX] Se agregó /ar forzosamente a la URL:", storeUrl);
+      }
+
       // Aseguramos que amount sea un número
       let amount = input.amount || input.context?.amount || input.data?.amount;
       if (typeof amount === 'string') {
@@ -61,7 +73,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         throw new Error("MERCADOPAGO_ACCESS_TOKEN no está configurado");
       }
 
-      // 2. CONSTRUCCIÓN DE URLS
+      // 2. CONSTRUCCIÓN DE URLS (Ahora usarán la storeUrl con /ar)
       const successUrl = `${storeUrl}/checkout?step=review&payment_status=success`;
       const failureUrl = `${storeUrl}/checkout?step=payment&payment_status=failure`;
       const pendingUrl = `${storeUrl}/checkout?step=payment&payment_status=pending`;
