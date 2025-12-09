@@ -1,40 +1,54 @@
 "use client"
 
-import { useSearchParams, useRouter } from "next/navigation"
+import { useSearchParams, useRouter, usePathname } from "next/navigation"
 import { useEffect, useState } from "react"
-import { Button } from "@medusajs/ui"
 
-export const MercadoPagoListener = ({ cart }: { cart: any }) => {
+const MercadoPagoListener = ({ cart }: { cart: any }) => {
   const searchParams = useSearchParams()
   const router = useRouter()
+  const pathname = usePathname()
   const [isProcessing, setIsProcessing] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
+  // 1. OBTENEMOS EL STATUS DE LA URL
   const paymentStatus = searchParams.get("payment_status")
-  const isMercadoPago = cart?.payment_session?.provider_id?.includes("mercadopago")
+
+  // 2. BUSCAMOS SI EXISTE MERCADO PAGO EN LA SESIÓN (Solución al undefined)
+  // Buscamos en todas las sesiones disponibles del carrito
+  const mpSession = cart?.payment_collection?.payment_sessions?.find(
+    (s: any) => s.provider_id?.includes("mercadopago")
+  )
+  
+  // También verificamos si la sesión activa actual es MP
+  const isActiveSessionMP = cart?.payment_session?.provider_id?.includes("mercadopago")
+
+  // Si cualquiera de los dos es verdadero, es una compra de MP
+  const isMercadoPago = !!mpSession || !!isActiveSessionMP
 
   useEffect(() => {
-    // AGREGA ESTOS LOGS:
-    console.log("👂 [LISTENER] Escuchando...", { 
-        isMercadoPago, 
+    // LOGS DE DEPURACIÓN (Para ver en consola F12)
+    console.log("👂 [LISTENER] Estado:", { 
+        url: pathname,
         paymentStatus, 
-        currentUrl: window.location.href 
+        isMercadoPago,
+        providerIdFound: mpSession?.provider_id || cart?.payment_session?.provider_id
     })
 
+    // Si detectamos éxito, es MP y no estamos procesando ya...
     if (isMercadoPago && paymentStatus === "success" && !isProcessing) {
-      console.log("✅ [LISTENER] ¡Pago detectado! Iniciando completeOrder...")
+      console.log("✅ [LISTENER] Pago exitoso detectado. Completando orden...")
       completeOrder()
     }
   }, [paymentStatus, isMercadoPago])
 
   const completeOrder = async () => {
     setIsProcessing(true)
-    setMessage("Pago confirmado en Mercado Pago. Creando orden en Medusa...")
+    setMessage("Pago confirmado. Creando tu orden...")
 
     try {
+      // URL del backend
       const backendUrl = process.env.NEXT_PUBLIC_MEDUSA_BACKEND_URL || "http://localhost:9000"
 
-      // 1. Llamamos a Medusa para cerrar el carrito y crear la orden
       const response = await fetch(`${backendUrl}/store/carts/${cart.id}/complete`, {
         method: "POST",
         headers: {
@@ -44,30 +58,32 @@ export const MercadoPagoListener = ({ cart }: { cart: any }) => {
 
       const data = await response.json()
 
-      if (data.type === "order") {
-        // 2. ¡ÉXITO! Redirigimos a la pantalla de confirmación oficial
+      if (response.ok && data.type === "order") {
         router.push(`/order/confirmed/${data.data.id}`)
       } else {
-        setMessage("Hubo un problema cerrando la orden. Por favor contacta a soporte.")
+        console.error("❌ Error completando orden:", data)
+        setMessage("Hubo un error al crear la orden, pero tu pago está registrado.")
         setIsProcessing(false)
       }
 
     } catch (err) {
-      console.error(err)
+      console.error("❌ Error de conexión:", err)
       setMessage("Error de conexión con el servidor.")
       setIsProcessing(false)
     }
   }
 
-  // Si no hay status success o no es MP, este componente no muestra nada (es invisible)
+  // Si no es el caso de éxito de MP, no mostramos nada
   if (!isMercadoPago || paymentStatus !== "success") return null
 
-  // Si estamos procesando, mostramos una pantalla de carga bloqueante para que el usuario no toque nada
+  // PANTALLA DE CARGA (Overlay)
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm">
-      <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-      <h2 className="text-xl font-bold text-gray-900">Procesando tu compra...</h2>
-      <p className="text-gray-600">{message || "Por favor espera un momento"}</p>
+    <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-white/95 backdrop-blur-sm">
+      <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-6"></div>
+      <h2 className="text-2xl font-bold text-gray-900 mb-2">¡Pago Exitoso!</h2>
+      <p className="text-gray-600 text-lg">{message || "Finalizando tu compra..."}</p>
     </div>
   )
 }
+
+export default MercadoPagoListener

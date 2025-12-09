@@ -8,7 +8,7 @@ import Divider from "@modules/common/components/divider"
 // --- NUEVO: Importamos el escuchador que creamos en el Paso 1 ---
 // Asegúrate de que la ruta coincida con donde creaste el archivo.
 // Si seguiste mis instrucciones, debería estar en ../../components/mercadopago-listener
-import { MercadoPagoListener } from "../../components/mercadopago-listener" 
+import  MercadoPagoListener  from "../../components/mercadopago-listener" 
 
 const CheckoutSummary = ({ cart }: { cart: any }) => {
   return (
