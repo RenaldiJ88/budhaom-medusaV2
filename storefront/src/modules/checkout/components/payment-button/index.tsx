@@ -4,7 +4,7 @@ import { Button } from "@medusajs/ui"
 import { OnApproveActions, OnApproveData } from "@paypal/paypal-js"
 import { PayPalButtons, usePayPalScriptReducer } from "@paypal/react-paypal-js"
 import { useElements, useStripe } from "@stripe/react-stripe-js"
-import React, { useState } from "react"
+import React, { useState, useEffect } from "react"
 import ErrorMessage from "../error-message"
 import Spinner from "@modules/common/icons/spinner"
 import { placeOrder } from "@lib/data/cart"
@@ -21,6 +21,17 @@ const PaymentButton: React.FC<PaymentButtonProps> = ({
   cart,
   "data-testid": dataTestId,
 }) => {
+  // 1. OBTENER LA SESIÓN
+  const paymentSession = cart.payment_collection?.payment_sessions?.[0]
+  const providerId = paymentSession?.provider_id || "desconocido"
+
+  // 🔍 LOG DE DEPURACIÓN (Mira esto en la consola F12 del navegador)
+  useEffect(() => {
+    console.log("🕵️ [DEBUG PADRE] Provider ID detectado:", providerId)
+    console.log("🕵️ [DEBUG PADRE] Datos de la sesión:", paymentSession)
+  }, [providerId, paymentSession])
+
+  // Lógica de validación
   const notReady =
     !cart ||
     !cart.shipping_address ||
@@ -28,18 +39,9 @@ const PaymentButton: React.FC<PaymentButtonProps> = ({
     !cart.email ||
     (cart.shipping_methods?.length ?? 0) < 1
 
-  // TODO: Add this once gift cards are implemented
-  // const paidByGiftcard =
-  //   cart?.gift_cards && cart?.gift_cards?.length > 0 && cart?.total === 0
-
-  // if (paidByGiftcard) {
-  //   return <GiftCardPaymentButton />
-  // }
-
-  const paymentSession = cart.payment_collection?.payment_sessions?.[0]
-
+  // 2. EL SWITCH (Modificado para ser más flexible)
   switch (true) {
-    case isStripe(paymentSession?.provider_id):
+    case isStripe(providerId):
       return (
         <StripePaymentButton
           notReady={notReady}
@@ -47,11 +49,11 @@ const PaymentButton: React.FC<PaymentButtonProps> = ({
           data-testid={dataTestId}
         />
       )
-    case isManual(paymentSession?.provider_id):
+    case isManual(providerId):
       return (
         <ManualTestPaymentButton notReady={notReady} data-testid={dataTestId} />
       )
-    case isPaypal(paymentSession?.provider_id):
+    case isPaypal(providerId):
       return (
         <PayPalPaymentButton
           notReady={notReady}
@@ -59,20 +61,28 @@ const PaymentButton: React.FC<PaymentButtonProps> = ({
           data-testid={dataTestId}
         />
       )
-    // --- AGREGADO: Lógica para Mercado Pago ---
-    case paymentSession?.provider_id === "mercadopago":
+    
+    // 🔥 CAMBIO CLAVE: Usamos .includes() para atrapar cualquier variante de nombre
+    case providerId.includes("mercadopago"): 
+      console.log("✅ [DEBUG PADRE] ¡Seleccionando botón de Mercado Pago!")
       return (
         <MercadoPagoPaymentButton
-          notReady={notReady}
+          notReady={notReady} // Pasamos el estado real
           cart={cart}
           session={paymentSession}
         />
       )
-    // ------------------------------------------
+
     default:
-      return <Button disabled>Select a payment method</Button>
+      console.log("⚠️ [DEBUG PADRE] Ningún caso coincidió para:", providerId)
+      return <Button disabled>Método de pago no reconocido: {providerId}</Button>
   }
 }
+
+// --- (El resto de los componentes Stripe, PayPal, Manual quedan igual abajo...) ---
+// --- COPIA Y PEGA EL RESTO DEL ARCHIVO ORIGINAL DEBAJO DE AQUÍ O MANTENLO ---
+// (Para ahorrar espacio, asegúrate de mantener los componentes StripePaymentButton, 
+// PayPalPaymentButton y ManualTestPaymentButton que ya tenías en este archivo)
 
 const GiftCardPaymentButton = () => {
   const [submitting, setSubmitting] = useState(false)
