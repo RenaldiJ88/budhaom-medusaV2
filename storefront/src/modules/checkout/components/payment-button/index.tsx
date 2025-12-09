@@ -10,6 +10,7 @@ import Spinner from "@modules/common/icons/spinner"
 import { placeOrder } from "@lib/data/cart"
 import { HttpTypes } from "@medusajs/types"
 import { isManual, isPaypal, isStripe } from "@lib/constants"
+import { MercadoPagoPaymentButton } from "./mercadopago-payment-button"
 
 type PaymentButtonProps = {
   cart: HttpTypes.StoreCart
@@ -58,6 +59,16 @@ const PaymentButton: React.FC<PaymentButtonProps> = ({
           data-testid={dataTestId}
         />
       )
+    // --- AGREGADO: Lógica para Mercado Pago ---
+    case paymentSession?.provider_id === "mercadopago":
+      return (
+        <MercadoPagoPaymentButton
+          notReady={notReady}
+          cart={cart}
+          session={paymentSession}
+        />
+      )
+    // ------------------------------------------
     default:
       return <Button disabled>Select a payment method</Button>
   }
