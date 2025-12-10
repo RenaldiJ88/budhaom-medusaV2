@@ -48,7 +48,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       // ---------------------------------------------------------
       // 🔥 FIX CRÍTICO: FORZAR /ar EN LA URL
       // Detectamos si falta el /ar y lo agregamos a la fuerza.
-      // Esto evita que Next.js haga redirecciones que borren los datos del pago.
       // ---------------------------------------------------------
       if (!storeUrl.includes("/ar") && !storeUrl.includes("localhost")) {
          // Eliminamos barra final si existe para evitar dobles barras //ar
@@ -73,8 +72,10 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         throw new Error("MERCADOPAGO_ACCESS_TOKEN no está configurado");
       }
 
-      // 2. CONSTRUCCIÓN DE URLS (Ahora usarán la storeUrl con /ar)
-      const successUrl = `${storeUrl}/checkout?step=review&payment_status=success`;
+      // 2. CONSTRUCCIÓN DE URLS 
+      // 🔥 CAMBIO CRÍTICO: Se cambia 'step=review' por 'step=payment' para evitar el 404
+      // Al volver a payment con status success, el frontend maneja mejor la redirección.
+      const successUrl = `${storeUrl}/checkout?step=payment&payment_status=success`; 
       const failureUrl = `${storeUrl}/checkout?step=payment&payment_status=failure`;
       const pendingUrl = `${storeUrl}/checkout?step=payment&payment_status=pending`;
 
@@ -93,6 +94,8 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           payer: {
             email: email,
           },
+          // 🔥 CAMBIO CRÍTICO: Agregamos external_reference para vincular el pago al carrito
+          external_reference: resource_id,
           back_urls: {
             success: successUrl,
             failure: failureUrl,
@@ -133,15 +136,12 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       console.log("🔥 [MP-DEBUG] 4. ÉXITO. ID:", response.id);
       console.log("🔥 [MP-DEBUG] 5. LINK:", response.init_point);
 
-      // --- AQUÍ ESTÁ LA CLAVE DEL ÉXITO ---
       return {
         id: response.id!,
         data: {
           id: response.id!,
-          // Guardamos ambos links por seguridad
           init_point: response.init_point!, 
           sandbox_init_point: response.sandbox_init_point!,
-          // Info extra útil
           date_created: response.date_created, 
         },
       };
