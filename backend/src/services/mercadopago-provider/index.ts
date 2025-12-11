@@ -9,11 +9,13 @@ import {
 } from "@medusajs/framework/types";
 import { MercadoPagoConfig, Preference } from 'mercadopago';
 
+// Configuraciones simples
 type Options = {
   access_token: string;
   public_key?: string;
 };
 
+// Tipo genérico para la data de la sesión
 type SessionData = Record<string, unknown>;
 
 class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
@@ -29,112 +31,110 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     this.options_ = options;
     this.logger_ = container.logger;
 
+    // Configurar MercadoPago
     this.mercadoPagoConfig = new MercadoPagoConfig({
       accessToken: options.access_token,
     });
   }
 
-  // --- 1. INICIAR PAGO (CORREGIDO PARA EVITAR PANTALLA ROJA) ---
+  // --- 1. INICIAR PAGO (CON LOGS DE FUEGO 🔥) ---
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    console.log("🔥 [MP-DEBUG] 1. Entrando a initiatePayment v4.0 (Fix Pantalla Roja)");
+    console.log("🔥 [MP-DEBUG] 1. Entrando a initiatePayment");
 
     try {
-      // --- VALIDACIÓN DE URL (CRÍTICO) ---
-      // Mercado Pago explota si las back_urls no tienen http:// o https://
+      // 1. OBTENCIÓN Y VALIDACIÓN DE VARIABLES
       let storeUrl = process.env.STORE_URL || "http://localhost:8000";
       
-      // Asegurar protocolo
-      if (!storeUrl.startsWith("http")) {
-        storeUrl = `http://${storeUrl}`;
-      }
-      
-      // Asegurar path /ar
+      // ---------------------------------------------------------
+      // 🔥 FIX CRÍTICO: FORZAR /ar EN LA URL
+      // Detectamos si falta el /ar y lo agregamos a la fuerza.
+      // ---------------------------------------------------------
       if (!storeUrl.includes("/ar") && !storeUrl.includes("localhost")) {
+         // Eliminamos barra final si existe para evitar dobles barras //ar
          if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
          storeUrl = `${storeUrl}/ar`;
-      }
-      // Quitar slash final si quedó
-      if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
-
-      console.log("🔥 [MP-FIX] URL Base saneada:", storeUrl);
-
-      // --- BLINDAJE DE ID ---
-      const resource_id = 
-        input.resource_id || 
-        input.context?.resource_id || 
-        input.cart?.id || 
-        input.data?.resource_id || 
-        input.context?.cart?.id;
-
-      if (!resource_id || resource_id === "cart_default") {
-        console.error("🔥 [MP-CRITICAL] ¡ALERTA! ID inválido.", JSON.stringify(input));
+         console.log("🔥 [MP-FIX] Se agregó /ar forzosamente a la URL:", storeUrl);
       }
 
-      // --- VALIDACIÓN DE MONTO (CRÍTICO) ---
+      // Aseguramos que amount sea un número
       let amount = input.amount || input.context?.amount || input.data?.amount;
-      
-      // Convertir a número si es string
       if (typeof amount === 'string') {
         amount = parseFloat(amount);
       }
 
-      // IMPORTANTE: Si amount es NaN, 0 o null, MP tira pantalla roja.
-      // Ponemos un fallback de 100 si no existe, solo para que no rompa (deberías revisar por qué llega vacío si pasa)
-      if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
-        console.warn(`🔥 [MP-WARN] Amount inválido (${amount}). Usando fallback 100 para evitar crash.`);
-        amount = 100; 
-      }
-
       const email = input.email || input.context?.email || input.data?.email || "test_user@test.com";
       const currency_code = input.currency_code || input.context?.currency_code || "ARS";
+      const resource_id = input.resource_id || input.context?.resource_id || "cart_default";
+
+      console.log(`🔥 [MP-DEBUG] 2. Datos procesados: URL=${storeUrl}, Amount=${amount}, Email=${email}, Currency=${currency_code}`);
 
       if (!this.options_?.access_token) {
         throw new Error("MERCADOPAGO_ACCESS_TOKEN no está configurado");
       }
 
-      // --- URLS DE RETORNO ---
-      const successUrl = `${storeUrl}/checkout?step=payment&payment_status=success`;
+      // 2. CONSTRUCCIÓN DE URLS 
+      // 🔥 CAMBIO CRÍTICO: Se cambia 'step=review' por 'step=payment' para evitar el 404
+      // Al volver a payment con status success, el frontend maneja mejor la redirección.
+      const successUrl = `${storeUrl}/checkout?step=payment&payment_status=success`; 
       const failureUrl = `${storeUrl}/checkout?step=payment&payment_status=failure`;
       const pendingUrl = `${storeUrl}/checkout?step=payment&payment_status=pending`;
 
-      // --- ARMADO DE PREFERENCIA ---
+      // 3. ARMADO DE PREFERENCIA
       const preferenceData = {
         body: {
           items: [
             {
-              id: resource_id || "item_temp",
-              title: "Orden Budha.Om", // MP prefiere 'description', pero 'title' en items es obligatorio
-              description: "Compra en Budha.Om", 
+              id: resource_id,
+              title: "Orden Budha.Om",
               quantity: 1,
-              unit_price: Number(amount), // Aquí ya está validado que es número > 0
+              unit_price: Number(amount),
               currency_id: currency_code.toUpperCase(),
             },
           ],
           payer: {
             email: email,
           },
-          external_reference: resource_id || "cart_error_id_missing",
+          // 🔥 CAMBIO CRÍTICO: Agregamos external_reference para vincular el pago al carrito
+          external_reference: resource_id,
           back_urls: {
             success: successUrl,
             failure: failureUrl,
             pending: pendingUrl,
           },
-          auto_return: "approved", 
+          // auto_return: "approved", 
         },
       };
 
-      // 🔥 LOG DEL PAYLOAD: Esto es lo que nos dirá la verdad si falla
-      console.log("🔥 [MP-PAYLOAD] Enviando este JSON a Mercado Pago:", JSON.stringify(preferenceData, null, 2));
+      console.log("🔥 [MP-DEBUG] 3. Enviando preferencia:", JSON.stringify(preferenceData, null, 2));
 
-      // --- CREACIÓN ---
+      // 4. CREACIÓN CON RETRY
       const preference = new Preference(this.mercadoPagoConfig);
-      const response = await preference.create(preferenceData);
+      let response;
+      const maxRetries = 2;
+      
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          if (attempt > 1) console.log(`🔥 [MP-DEBUG] Reintento ${attempt}...`);
+          response = await preference.create(preferenceData);
+          break; 
+        } catch (error: any) {
+          const msg = error?.message || String(error);
+          console.error(`🔥 [MP-ERROR] Intento ${attempt} falló: ${msg}`);
+          
+          if (msg.includes('timeout') && attempt < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            continue;
+          }
+          throw error;
+        }
+      }
 
       if (!response || !response.id) {
         throw new Error("MercadoPago no devolvió un ID válido");
       }
 
-      console.log("🔥 [MP-SUCCESS] Link generado:", response.init_point);
+      console.log("🔥 [MP-DEBUG] 4. ÉXITO. ID:", response.id);
+      console.log("🔥 [MP-DEBUG] 5. LINK:", response.init_point);
 
       return {
         id: response.id!,
@@ -143,52 +143,93 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           init_point: response.init_point!, 
           sandbox_init_point: response.sandbox_init_point!,
           date_created: response.date_created, 
-          resource_id: resource_id 
         },
       };
 
     } catch (error: any) {
-      console.error("🔥 [MP-CRITICAL] Error FATAL en initiatePayment:", error);
+      console.error("🔥 [MP-CRITICAL] Error FATAL en initiatePayment:");
+      console.error(error); 
+      if (error.cause) console.error("Causa:", JSON.stringify(error.cause, null, 2));
       throw error;
     }
   }
 
-  // --- MÉTODOS ESTÁNDAR ---
-  async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> {
-    return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || input.data || {} };
+  // --- 2. AUTORIZAR ---
+  async authorizePayment(
+    input: Record<string, any>
+  ): Promise<{
+    status: PaymentSessionStatus;
+    data: SessionData;
+  }> {
+    return {
+      status: PaymentSessionStatus.AUTHORIZED,
+      data: input.session_data || input.data || {},
+    };
   }
 
-  async cancelPayment(input: any): Promise<SessionData> {
+  // --- 3. CANCELAR ---
+  async cancelPayment(
+    input: Record<string, any>
+  ): Promise<SessionData> {
     return (input.session_data || input.data || {}) as SessionData;
   }
 
-  async capturePayment(input: any): Promise<SessionData> {
+  // --- 4. CAPTURAR ---
+  async capturePayment(
+    input: Record<string, any>
+  ): Promise<SessionData> {
     return (input.session_data || input.data || {}) as SessionData;
   }
 
-  async deletePayment(input: any): Promise<SessionData> {
+  // --- 5. BORRAR ---
+  async deletePayment(
+    input: Record<string, any>
+  ): Promise<SessionData> {
     return (input.session_data || input.data || {}) as SessionData;
   }
 
-  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> {
-    return { status: PaymentSessionStatus.AUTHORIZED };
+  // --- 6. ESTADO ---
+  async getPaymentStatus(
+    input: Record<string, any>
+  ): Promise<{ status: PaymentSessionStatus }> {
+    return {
+      status: PaymentSessionStatus.AUTHORIZED
+    };
   }
 
-  async refundPayment(input: any): Promise<SessionData> {
+  // --- 7. REEMBOLSAR ---
+  async refundPayment(
+    input: Record<string, any>
+  ): Promise<SessionData> {
     return (input.session_data || input.data || {}) as SessionData;
   }
 
-  async retrievePayment(input: any): Promise<SessionData> {
+  // --- 8. RECUPERAR ---
+  async retrievePayment(
+    input: Record<string, any>
+  ): Promise<SessionData> {
     return (input.session_data || input.data || {}) as SessionData;
   }
 
-  async updatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    // Al actualizar, volvemos a iniciar para regenerar la preferencia con el nuevo monto
+  // --- 9. ACTUALIZAR ---
+  async updatePayment(
+    input: any
+  ): Promise<{ id: string, data: SessionData }> {
+    // Si cambia el carrito, volvemos a iniciar el pago para actualizar el monto
     return this.initiatePayment(input);
   }
 
-  async getWebhookActionAndData(input: any): Promise<WebhookActionResult> {
-    return { action: PaymentActions.NOT_SUPPORTED };
+  // --- 10. WEBHOOK ---
+  async getWebhookActionAndData(
+    input: { 
+      data: Record<string, unknown>; 
+      rawData: string | Buffer; 
+      headers: Record<string, unknown>; 
+    }
+  ): Promise<WebhookActionResult> {
+    return {
+      action: PaymentActions.NOT_SUPPORTED
+    };
   }
 }
 
