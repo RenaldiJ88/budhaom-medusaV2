@@ -37,23 +37,38 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     });
   }
 
-  // --- 1. INICIAR PAGO (CON LOGS DE FUEGO 🔥) ---
+  // --- 1. INICIAR PAGO (CON BLINDAJE DE ID 🛡️) ---
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    console.log("🔥 [MP-DEBUG] 1. Entrando a initiatePayment");
+    console.log("🔥 [MP-DEBUG] 1. Entrando a initiatePayment v3.0 (Blindado)");
 
     try {
       // 1. OBTENCIÓN Y VALIDACIÓN DE VARIABLES
       let storeUrl = process.env.STORE_URL || "http://localhost:8000";
       
-      // ---------------------------------------------------------
-      // 🔥 FIX CRÍTICO: FORZAR /ar EN LA URL
-      // Detectamos si falta el /ar y lo agregamos a la fuerza.
-      // ---------------------------------------------------------
+      // Fix: Asegurar /ar en la URL para evitar redirecciones que pierdan sesión
       if (!storeUrl.includes("/ar") && !storeUrl.includes("localhost")) {
-         // Eliminamos barra final si existe para evitar dobles barras //ar
          if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
          storeUrl = `${storeUrl}/ar`;
-         console.log("🔥 [MP-FIX] Se agregó /ar forzosamente a la URL:", storeUrl);
+         console.log("🔥 [MP-FIX] URL ajustada:", storeUrl);
+      }
+
+      // --- BLINDAJE DE ID DE CARRITO ---
+      // Buscamos el ID en todos los lugares posibles para evitar 'cart_default'
+      const resource_id = 
+        input.resource_id || 
+        input.context?.resource_id || 
+        input.cart?.id || 
+        input.data?.resource_id || 
+        // Intento desesperado de buscar en el contexto profundo
+        input.context?.cart?.id;
+
+      console.log(`🔥 [MP-DEBUG] ID Detectado: ${resource_id}`);
+
+      // VALIDACIÓN CRÍTICA: Si no hay ID, es peligroso seguir
+      if (!resource_id || resource_id === "cart_default") {
+        console.error("🔥 [MP-CRITICAL] ¡ALERTA! No se encontró un ID de carrito válido.", JSON.stringify(input));
+        // Si quieres que falle en lugar de cobrar mal, descomenta la siguiente línea:
+        // throw new Error("No se pudo identificar el carrito para el pago.");
       }
 
       // Aseguramos que amount sea un número
@@ -64,18 +79,14 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
 
       const email = input.email || input.context?.email || input.data?.email || "test_user@test.com";
       const currency_code = input.currency_code || input.context?.currency_code || "ARS";
-      const resource_id = input.resource_id || input.context?.resource_id || "cart_default";
-
-      console.log(`🔥 [MP-DEBUG] 2. Datos procesados: URL=${storeUrl}, Amount=${amount}, Email=${email}, Currency=${currency_code}`);
 
       if (!this.options_?.access_token) {
         throw new Error("MERCADOPAGO_ACCESS_TOKEN no está configurado");
       }
 
-      // 2. CONSTRUCCIÓN DE URLS 
-      // 🔥 CAMBIO CRÍTICO: Se cambia 'step=review' por 'step=payment' para evitar el 404
-      // Al volver a payment con status success, el frontend maneja mejor la redirección.
-      const successUrl = `${storeUrl}/checkout?step=payment&payment_status=success`; 
+      // 2. CONSTRUCCIÓN DE URLS
+      // Usamos step=payment para que el frontend procese el éxito correctamente
+      const successUrl = `${storeUrl}/checkout?step=payment&payment_status=success`;
       const failureUrl = `${storeUrl}/checkout?step=payment&payment_status=failure`;
       const pendingUrl = `${storeUrl}/checkout?step=payment&payment_status=pending`;
 
@@ -84,7 +95,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         body: {
           items: [
             {
-              id: resource_id,
+              id: resource_id || "item_temp", // Fallback solo para el item, no para la referencia
               title: "Orden Budha.Om",
               quantity: 1,
               unit_price: Number(amount),
@@ -94,8 +105,8 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           payer: {
             email: email,
           },
-          // 🔥 CAMBIO CRÍTICO: Agregamos external_reference para vincular el pago al carrito
-          external_reference: resource_id,
+          // 🔥 CRÍTICO: Aquí va el ID real que recuperamos arriba
+          external_reference: resource_id || "cart_error_id_missing",
           back_urls: {
             success: successUrl,
             failure: failureUrl,
@@ -105,7 +116,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         },
       };
 
-      console.log("🔥 [MP-DEBUG] 3. Enviando preferencia:", JSON.stringify(preferenceData, null, 2));
+      console.log("🔥 [MP-DEBUG] 3. Creando preferencia para ID:", resource_id);
 
       // 4. CREACIÓN CON RETRY
       const preference = new Preference(this.mercadoPagoConfig);
@@ -114,18 +125,12 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          if (attempt > 1) console.log(`🔥 [MP-DEBUG] Reintento ${attempt}...`);
           response = await preference.create(preferenceData);
           break; 
         } catch (error: any) {
-          const msg = error?.message || String(error);
-          console.error(`🔥 [MP-ERROR] Intento ${attempt} falló: ${msg}`);
-          
-          if (msg.includes('timeout') && attempt < maxRetries) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            continue;
-          }
-          throw error;
+          console.error(`🔥 [MP-ERROR] Intento ${attempt} falló:`, error.message);
+          if (attempt < maxRetries) await new Promise(r => setTimeout(r, 2000));
+          else throw error;
         }
       }
 
@@ -133,8 +138,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         throw new Error("MercadoPago no devolvió un ID válido");
       }
 
-      console.log("🔥 [MP-DEBUG] 4. ÉXITO. ID:", response.id);
-      console.log("🔥 [MP-DEBUG] 5. LINK:", response.init_point);
+      console.log("🔥 [MP-DEBUG] 4. ÉXITO. Link:", response.init_point);
 
       return {
         id: response.id!,
@@ -143,13 +147,12 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           init_point: response.init_point!, 
           sandbox_init_point: response.sandbox_init_point!,
           date_created: response.date_created, 
+          resource_id: resource_id // Guardamos el ID que usamos
         },
       };
 
     } catch (error: any) {
-      console.error("🔥 [MP-CRITICAL] Error FATAL en initiatePayment:");
-      console.error(error); 
-      if (error.cause) console.error("Causa:", JSON.stringify(error.cause, null, 2));
+      console.error("🔥 [MP-CRITICAL] Error FATAL en initiatePayment:", error);
       throw error;
     }
   }
@@ -215,7 +218,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   async updatePayment(
     input: any
   ): Promise<{ id: string, data: SessionData }> {
-    // Si cambia el carrito, volvemos a iniciar el pago para actualizar el monto
     return this.initiatePayment(input);
   }
 
