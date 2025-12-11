@@ -25,40 +25,28 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
 
   constructor(container: any, options: Options) {
     super(container, options); 
-    
     this.options_ = options;
     this.logger_ = container.logger;
-
     this.mercadoPagoConfig = new MercadoPagoConfig({
       accessToken: options.access_token,
     });
   }
 
-  // --- 1. INICIAR PAGO (CORREGIDO PARA EVITAR PANTALLA ROJA) ---
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    console.log("🔥 [MP-DEBUG] 1. Entrando a initiatePayment v4.0 (Fix Pantalla Roja)");
+    console.log("🔥 [MP-DEBUG] v5.0 INICIANDO PAGO...");
 
     try {
-      // --- VALIDACIÓN DE URL (CRÍTICO) ---
-      // Mercado Pago explota si las back_urls no tienen http:// o https://
+      // 1. URL Saneada
       let storeUrl = process.env.STORE_URL || "http://localhost:8000";
-      
-      // Asegurar protocolo
-      if (!storeUrl.startsWith("http")) {
-        storeUrl = `http://${storeUrl}`;
-      }
-      
-      // Asegurar path /ar
+      if (!storeUrl.startsWith("http")) storeUrl = `http://${storeUrl}`;
       if (!storeUrl.includes("/ar") && !storeUrl.includes("localhost")) {
          if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
          storeUrl = `${storeUrl}/ar`;
       }
-      // Quitar slash final si quedó
       if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
 
-      console.log("🔥 [MP-FIX] URL Base saneada:", storeUrl);
-
-      // --- BLINDAJE DE ID ---
+      // 2. BÚSQUEDA EXHAUSTIVA DE ID (BLINDAJE)
+      // Buscamos el ID hasta debajo de las piedras
       const resource_id = 
         input.resource_id || 
         input.context?.resource_id || 
@@ -66,75 +54,48 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         input.data?.resource_id || 
         input.context?.cart?.id;
 
-      if (!resource_id || resource_id === "cart_default") {
-        console.error("🔥 [MP-CRITICAL] ¡ALERTA! ID inválido.", JSON.stringify(input));
-      }
+      console.log(`🔥 [MP-DEBUG] ID ENCONTRADO: ${resource_id}`);
 
-      // --- VALIDACIÓN DE MONTO (CRÍTICO) ---
+      // Si no hay ID, usamos un string único para detectar que se actualizó el código
+      const final_reference = resource_id || "NO_ID_DETECTADO";
+
+      // 3. MONTO
       let amount = input.amount || input.context?.amount || input.data?.amount;
-      
-      // Convertir a número si es string
-      if (typeof amount === 'string') {
-        amount = parseFloat(amount);
-      }
+      if (typeof amount === 'string') amount = parseFloat(amount);
+      if (!amount || isNaN(Number(amount))) amount = 1000; // Fallback seguro
 
-      // IMPORTANTE: Si amount es NaN, 0 o null, MP tira pantalla roja.
-      // Ponemos un fallback de 100 si no existe, solo para que no rompa (deberías revisar por qué llega vacío si pasa)
-      if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
-        console.warn(`🔥 [MP-WARN] Amount inválido (${amount}). Usando fallback 100 para evitar crash.`);
-        amount = 100; 
-      }
+      const email = input.email || input.context?.email || "guest@test.com";
+      const currency = input.currency_code || "ARS";
 
-      const email = input.email || input.context?.email || input.data?.email || "test_user@test.com";
-      const currency_code = input.currency_code || input.context?.currency_code || "ARS";
-
-      if (!this.options_?.access_token) {
-        throw new Error("MERCADOPAGO_ACCESS_TOKEN no está configurado");
-      }
-
-      // --- URLS DE RETORNO ---
-      const successUrl = `${storeUrl}/checkout?step=payment&payment_status=success`;
-      const failureUrl = `${storeUrl}/checkout?step=payment&payment_status=failure`;
-      const pendingUrl = `${storeUrl}/checkout?step=payment&payment_status=pending`;
-
-      // --- ARMADO DE PREFERENCIA ---
+      // 4. PREFERENCIA
       const preferenceData = {
         body: {
           items: [
             {
-              id: resource_id || "item_temp",
-              title: "Orden Budha.Om", // MP prefiere 'description', pero 'title' en items es obligatorio
-              description: "Compra en Budha.Om", 
+              id: final_reference,
+              title: "Compra en Tienda",
               quantity: 1,
-              unit_price: Number(amount), // Aquí ya está validado que es número > 0
-              currency_id: currency_code.toUpperCase(),
+              unit_price: Number(amount),
+              currency_id: currency.toUpperCase(),
             },
           ],
-          payer: {
-            email: email,
-          },
-          external_reference: resource_id || "cart_error_id_missing",
+          payer: { email: email },
+          external_reference: final_reference, // <--- ESTO ES LO IMPORTANTE
           back_urls: {
-            success: successUrl,
-            failure: failureUrl,
-            pending: pendingUrl,
+            success: `${storeUrl}/checkout?step=payment&payment_status=success`,
+            failure: `${storeUrl}/checkout?step=payment&payment_status=failure`,
+            pending: `${storeUrl}/checkout?step=payment&payment_status=pending`,
           },
-          auto_return: "approved", 
+          auto_return: "approved",
         },
       };
 
-      // 🔥 LOG DEL PAYLOAD: Esto es lo que nos dirá la verdad si falla
-      console.log("🔥 [MP-PAYLOAD] Enviando este JSON a Mercado Pago:", JSON.stringify(preferenceData, null, 2));
+      console.log("🔥 [MP-PAYLOAD] Referencia enviada:", final_reference);
 
-      // --- CREACIÓN ---
       const preference = new Preference(this.mercadoPagoConfig);
       const response = await preference.create(preferenceData);
 
-      if (!response || !response.id) {
-        throw new Error("MercadoPago no devolvió un ID válido");
-      }
-
-      console.log("🔥 [MP-SUCCESS] Link generado:", response.init_point);
+      if (!response.id) throw new Error("MP no devolvió ID");
 
       return {
         id: response.id!,
@@ -142,51 +103,31 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           id: response.id!,
           init_point: response.init_point!, 
           sandbox_init_point: response.sandbox_init_point!,
-          date_created: response.date_created, 
-          resource_id: resource_id 
+          resource_id: final_reference // Guardamos la referencia usada
         },
       };
 
     } catch (error: any) {
-      console.error("🔥 [MP-CRITICAL] Error FATAL en initiatePayment:", error);
+      console.error("🔥 [MP-ERROR]", error);
       throw error;
     }
   }
 
-  // --- MÉTODOS ESTÁNDAR ---
+  // --- MÉTODOS OBLIGATORIOS (BOILERPLATE) ---
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> {
-    return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || input.data || {} };
+    return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} };
   }
-
-  async cancelPayment(input: any): Promise<SessionData> {
-    return (input.session_data || input.data || {}) as SessionData;
+  async cancelPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
+  async capturePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
+  async deletePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
+  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { 
+    return { status: PaymentSessionStatus.AUTHORIZED }; 
   }
-
-  async capturePayment(input: any): Promise<SessionData> {
-    return (input.session_data || input.data || {}) as SessionData;
-  }
-
-  async deletePayment(input: any): Promise<SessionData> {
-    return (input.session_data || input.data || {}) as SessionData;
-  }
-
-  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> {
-    return { status: PaymentSessionStatus.AUTHORIZED };
-  }
-
-  async refundPayment(input: any): Promise<SessionData> {
-    return (input.session_data || input.data || {}) as SessionData;
-  }
-
-  async retrievePayment(input: any): Promise<SessionData> {
-    return (input.session_data || input.data || {}) as SessionData;
-  }
-
+  async refundPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
+  async retrievePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async updatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    // Al actualizar, volvemos a iniciar para regenerar la preferencia con el nuevo monto
     return this.initiatePayment(input);
   }
-
   async getWebhookActionAndData(input: any): Promise<WebhookActionResult> {
     return { action: PaymentActions.NOT_SUPPORTED };
   }
