@@ -33,10 +33,17 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    console.log("🔥 [MP-DEBUG] v5.0 INICIANDO PAGO...");
+    console.log("🔥 [MP-DEBUG] v6.0 - BUSCANDO EL ID PERDIDO");
+    
+    // --- CHIVATO DE DATOS (Para ver qué nos manda Medusa realmente) ---
+    // Esto imprimirá en tu terminal las llaves del objeto input
+    try {
+      console.log("🔥 [MP-DATA] Keys recibidas:", Object.keys(input));
+      if (input.context) console.log("🔥 [MP-DATA] Context keys:", Object.keys(input.context));
+      // console.log("🔥 [MP-DATA] FULL INPUT:", JSON.stringify(input)); // Descomentar solo si es necesario
+    } catch (e) { console.log("Error logueando input"); }
 
     try {
-      // 1. URL Saneada
       let storeUrl = process.env.STORE_URL || "http://localhost:8000";
       if (!storeUrl.startsWith("http")) storeUrl = `http://${storeUrl}`;
       if (!storeUrl.includes("/ar") && !storeUrl.includes("localhost")) {
@@ -45,42 +52,47 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       }
       if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
 
-      // 2. BÚSQUEDA EXHAUSTIVA DE ID (BLINDAJE)
-      // Buscamos el ID hasta debajo de las piedras
-      const resource_id = 
-        input.resource_id || 
-        input.context?.resource_id || 
-        input.cart?.id || 
-        input.data?.resource_id || 
-        input.context?.cart?.id;
+      // --- ESTRATEGIA DE BÚSQUEDA DE ID ---
+      // 1. Buscamos el resource_id estándar
+      let resource_id = input.resource_id || input.context?.resource_id;
 
-      console.log(`🔥 [MP-DEBUG] ID ENCONTRADO: ${resource_id}`);
+      // 2. Si falla, buscamos en lugares exóticos de Medusa v2
+      if (!resource_id) resource_id = input.payment_collection_id || input.data?.resource_id;
 
-      // Si no hay ID, usamos un string único para detectar que se actualizó el código
-      const final_reference = resource_id || "NO_ID_DETECTADO";
+      // 3. (EL SALVAVIDAS) Si sigue sin haber ID de carrito, usamos el ID de la sesión de pago
+      // Esto asegura que SIEMPRE haya una referencia válida
+      if (!resource_id) {
+        console.warn("⚠️ [MP-WARN] No se encontró Cart ID. Usando Payment Session ID como fallback.");
+        resource_id = input.id; // Ej: "payses_01..."
+      }
 
-      // 3. MONTO
+      console.log(`🔥 [MP-DEBUG] REFERENCIA FINAL A USAR: ${resource_id}`);
+
+      // Validación final para no mandar "undefined" a MP
+      const final_reference = resource_id || "error_id_fatal";
+
+      // --- MONTO ---
       let amount = input.amount || input.context?.amount || input.data?.amount;
       if (typeof amount === 'string') amount = parseFloat(amount);
-      if (!amount || isNaN(Number(amount))) amount = 1000; // Fallback seguro
+      if (!amount || isNaN(Number(amount))) amount = 1500; 
 
       const email = input.email || input.context?.email || "guest@test.com";
       const currency = input.currency_code || "ARS";
 
-      // 4. PREFERENCIA
+      // --- PREFERENCIA ---
       const preferenceData = {
         body: {
           items: [
             {
               id: final_reference,
-              title: "Compra en Tienda",
+              title: "Compra Tienda",
               quantity: 1,
               unit_price: Number(amount),
               currency_id: currency.toUpperCase(),
             },
           ],
           payer: { email: email },
-          external_reference: final_reference, // <--- ESTO ES LO IMPORTANTE
+          external_reference: final_reference, // <--- Aquí va el ID recuperado
           back_urls: {
             success: `${storeUrl}/checkout?step=payment&payment_status=success`,
             failure: `${storeUrl}/checkout?step=payment&payment_status=failure`,
@@ -89,8 +101,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           auto_return: "approved",
         },
       };
-
-      console.log("🔥 [MP-PAYLOAD] Referencia enviada:", final_reference);
 
       const preference = new Preference(this.mercadoPagoConfig);
       const response = await preference.create(preferenceData);
@@ -103,7 +113,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           id: response.id!,
           init_point: response.init_point!, 
           sandbox_init_point: response.sandbox_init_point!,
-          resource_id: final_reference // Guardamos la referencia usada
+          resource_id: final_reference 
         },
       };
 
@@ -113,7 +123,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     }
   }
 
-  // --- MÉTODOS OBLIGATORIOS (BOILERPLATE) ---
+  // --- BOILERPLATE ---
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> {
     return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} };
   }
