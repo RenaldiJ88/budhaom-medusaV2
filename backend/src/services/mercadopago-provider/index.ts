@@ -33,7 +33,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    console.log("🔥 [MP-DEBUG] v8.0 - FINAL (MEMORIA)");
+    console.log("🔥 [MP-DEBUG] v9.0 - INICIANDO (Create/Update)...");
 
     try {
       // 1. URL Saneada
@@ -45,25 +45,24 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       }
       if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
 
-      // --- 2. LÓGICA INTELIGENTE DE ID ---
-      // A) Intentamos obtener el ID fresco (Nueva Sesión)
-      let resource_id = 
-        input.resource_id || 
-        input.context?.resource_id;
+      // --- 2. BÚSQUEDA DE ID ---
+      // Buscamos el ID en la entrada estándar (Create)
+      let resource_id = input.resource_id || input.context?.resource_id;
 
-      // B) Si no hay ID fresco, buscamos en la memoria (Update Sesión)
-      if (!resource_id && input.data && input.data.resource_id) {
-        console.log("♻️ [MP-INFO] Recuperando ID de la memoria:", input.data.resource_id);
+      // Si no viene (es un Update), buscamos si lo guardamos antes en la data
+      if (!resource_id && input.data?.resource_id) {
         resource_id = input.data.resource_id;
+        console.log("♻️ [MP-INFO] ID recuperado de la memoria:", resource_id);
       }
 
-      // C) Fallback de emergencia (Si fallan A y B, usamos ID de sesión o error)
+      // Si sigue sin aparecer, usamos el ID de la sesión como último recurso
       if (!resource_id) {
-         resource_id = input.id; // Intentar usar ID de sesión "payses_..."
-         console.warn("⚠️ [MP-WARN] ID no encontrado en input ni memoria. Usando Session ID:", resource_id);
+         resource_id = input.id; 
+         console.warn("⚠️ [MP-WARN] Usando Session ID como fallback:", resource_id);
       }
-      
-      const final_reference = resource_id || "error_fatal_no_id";
+
+      // VALIDACIÓN FINAL: Si esto sigue vacío, es un error fatal.
+      const final_reference = resource_id || "error_fatal_v9";
 
       // 3. Monto
       let amount = input.amount || input.context?.amount;
@@ -73,7 +72,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       const email = input.email || input.context?.email || "guest@test.com";
       const currency = input.currency_code || "ARS";
 
-      // 4. Preferencia
+      // 4. Preferencia MP
       const preferenceData = {
         body: {
           items: [
@@ -86,7 +85,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             },
           ],
           payer: { email: email },
-          external_reference: final_reference,
+          external_reference: final_reference, // <--- Aquí va el ID
           back_urls: {
             success: `${storeUrl}/checkout?step=payment&payment_status=success`,
             failure: `${storeUrl}/checkout?step=payment&payment_status=failure`,
@@ -107,7 +106,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           id: response.id!,
           init_point: response.init_point!, 
           sandbox_init_point: response.sandbox_init_point!,
-          resource_id: final_reference // <--- 🔥 CLAVE: Guardamos el ID para el futuro
+          resource_id: final_reference // 🔥 GUARDAMOS EL ID PARA SIEMPRE
         },
       };
 
@@ -115,6 +114,28 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       console.error("🔥 [MP-ERROR]", error);
       throw error;
     }
+  }
+
+  // --- 🔥 LA CLAVE: UPDATE PAYMENT CON AUTODESTRUCCIÓN ---
+  async updatePayment(input: any): Promise<{ id: string, data: SessionData }> {
+    console.log("🔥 [MP-DEBUG] Intentando UPDATE de sesión...");
+    
+    // Verificamos si esta sesión tiene un ID guardado
+    const savedId = input.data?.resource_id;
+
+    if (!savedId) {
+      // SI NO TIENE ID, ES UNA SESIÓN ZOMBIE 🧟‍♂️
+      console.error("🔥 [MP-CRITICAL] ¡Sesión Zombie detectada! Forzando error para regenerar.");
+      throw new Error("INVALID_SESSION_DATA"); 
+    }
+
+    // Si tiene ID, inyectamos el ID recuperado y procedemos
+    const newInput = {
+      ...input,
+      resource_id: savedId 
+    };
+    
+    return this.initiatePayment(newInput);
   }
 
   // --- BOILERPLATE ---
@@ -129,9 +150,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
   async refundPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async retrievePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
-  async updatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    return this.initiatePayment(input);
-  }
   async getWebhookActionAndData(input: any): Promise<WebhookActionResult> {
     return { action: PaymentActions.NOT_SUPPORTED };
   }
