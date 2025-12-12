@@ -33,7 +33,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    console.log("🔥 [MP-DEBUG] v7.0 - MODO ESPÍA ACTIVO");
+    console.log("🔥 [MP-DEBUG] v8.0 - FINAL (MEMORIA)");
 
     try {
       // 1. URL Saneada
@@ -45,30 +45,27 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       }
       if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
 
-      // 2. BUSCANDO EL ID (O ESPIANDO LAS LLAVES)
-      // Primero intentamos lo obvio
+      // --- 2. LÓGICA INTELIGENTE DE ID ---
+      // A) Intentamos obtener el ID fresco (Nueva Sesión)
       let resource_id = 
         input.resource_id || 
-        input.context?.resource_id || 
-        input.id; // El ID de la sesión
+        input.context?.resource_id;
 
-      // --- TRUCO DE MAGIA: Si no hay ID, imprimimos las llaves en la referencia ---
-      if (!resource_id) {
-        // Sacamos una foto de qué diablos tiene el objeto 'input'
-        const keys = Object.keys(input || {}).join('_');
-        const contextKeys = input.context ? Object.keys(input.context).join('_') : 'no_ctx';
-        
-        // Creamos un string de debug para leer en la URL
-        // Ej: "DEBUG_email_amount_currency_no_ctx"
-        resource_id = `DEBUG_K_${keys}_C_${contextKeys}`.substring(0, 60); 
-        
-        console.warn("⚠️ [MP-WARN] ID no encontrado. Modo Debug activado:", resource_id);
+      // B) Si no hay ID fresco, buscamos en la memoria (Update Sesión)
+      if (!resource_id && input.data && input.data.resource_id) {
+        console.log("♻️ [MP-INFO] Recuperando ID de la memoria:", input.data.resource_id);
+        resource_id = input.data.resource_id;
       }
 
-      // Fallback final por si explota el debug
-      const final_reference = resource_id || "error_total";
+      // C) Fallback de emergencia (Si fallan A y B, usamos ID de sesión o error)
+      if (!resource_id) {
+         resource_id = input.id; // Intentar usar ID de sesión "payses_..."
+         console.warn("⚠️ [MP-WARN] ID no encontrado en input ni memoria. Usando Session ID:", resource_id);
+      }
+      
+      const final_reference = resource_id || "error_fatal_no_id";
 
-      // 3. Monto y Email
+      // 3. Monto
       let amount = input.amount || input.context?.amount;
       if (typeof amount === 'string') amount = parseFloat(amount);
       if (!amount || isNaN(Number(amount))) amount = 1500; 
@@ -76,20 +73,20 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       const email = input.email || input.context?.email || "guest@test.com";
       const currency = input.currency_code || "ARS";
 
-      // 4. Crear Preferencia
+      // 4. Preferencia
       const preferenceData = {
         body: {
           items: [
             {
               id: final_reference,
-              title: "Compra Debug",
+              title: "Compra Tienda",
               quantity: 1,
               unit_price: Number(amount),
               currency_id: currency.toUpperCase(),
             },
           ],
           payer: { email: email },
-          external_reference: final_reference, // <--- Aquí veremos la info
+          external_reference: final_reference,
           back_urls: {
             success: `${storeUrl}/checkout?step=payment&payment_status=success`,
             failure: `${storeUrl}/checkout?step=payment&payment_status=failure`,
@@ -110,7 +107,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           id: response.id!,
           init_point: response.init_point!, 
           sandbox_init_point: response.sandbox_init_point!,
-          resource_id: final_reference 
+          resource_id: final_reference // <--- 🔥 CLAVE: Guardamos el ID para el futuro
         },
       };
 
