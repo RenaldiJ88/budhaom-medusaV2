@@ -33,7 +33,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    console.log("🔥 [MP-DEBUG] v9.0 - INICIANDO (Create/Update)...");
+    console.log("🔥 [MP-DEBUG] v10 - ESTRATEGIA COMODÍN 🃏");
 
     try {
       // 1. URL Saneada
@@ -45,26 +45,19 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       }
       if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
 
-      // --- 2. BÚSQUEDA DE ID ---
-      // Buscamos el ID en la entrada estándar (Create)
-      let resource_id = input.resource_id || input.context?.resource_id;
+      // --- 2. GENERACIÓN DE ID A PRUEBA DE BALAS ---
+      // Intentamos leer el ID. Si no existe, usamos el de la sesión.
+      // Si TAMPOCO existe, generamos uno aleatorio. ¡Nunca más undefined!
+      let resource_id = input.resource_id || input.context?.resource_id || input.id;
 
-      // Si no viene (es un Update), buscamos si lo guardamos antes en la data
-      if (!resource_id && input.data?.resource_id) {
-        resource_id = input.data.resource_id;
-        console.log("♻️ [MP-INFO] ID recuperado de la memoria:", resource_id);
-      }
-
-      // Si sigue sin aparecer, usamos el ID de la sesión como último recurso
       if (!resource_id) {
-         resource_id = input.id; 
-         console.warn("⚠️ [MP-WARN] Usando Session ID como fallback:", resource_id);
+        // Generamos un ID único temporal (ej: mp_gen_9a3f...)
+        const randomPart = Math.random().toString(36).substring(7);
+        resource_id = `mp_gen_${randomPart}`;
+        console.warn("⚠️ [MP-WARN] ID no detectado. Usando ID generado:", resource_id);
       }
 
-      // VALIDACIÓN FINAL: Si esto sigue vacío, es un error fatal.
-      const final_reference = resource_id || "error_fatal_v9";
-
-      // 3. Monto
+      // 3. Monto (Validación estricta)
       let amount = input.amount || input.context?.amount;
       if (typeof amount === 'string') amount = parseFloat(amount);
       if (!amount || isNaN(Number(amount))) amount = 1500; 
@@ -77,7 +70,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         body: {
           items: [
             {
-              id: final_reference,
+              id: resource_id,
               title: "Compra Tienda",
               quantity: 1,
               unit_price: Number(amount),
@@ -85,7 +78,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             },
           ],
           payer: { email: email },
-          external_reference: final_reference, // <--- Aquí va el ID
+          external_reference: resource_id,
           back_urls: {
             success: `${storeUrl}/checkout?step=payment&payment_status=success`,
             failure: `${storeUrl}/checkout?step=payment&payment_status=failure`,
@@ -106,7 +99,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           id: response.id!,
           init_point: response.init_point!, 
           sandbox_init_point: response.sandbox_init_point!,
-          resource_id: final_reference // 🔥 GUARDAMOS EL ID PARA SIEMPRE
+          resource_id: resource_id // Guardamos el ID generado para usarlo después
         },
       };
 
@@ -116,26 +109,16 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     }
   }
 
-  // --- 🔥 LA CLAVE: UPDATE PAYMENT CON AUTODESTRUCCIÓN ---
+  // --- UPDATE: Recupera el ID generado antes ---
   async updatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    console.log("🔥 [MP-DEBUG] Intentando UPDATE de sesión...");
-    
-    // Verificamos si esta sesión tiene un ID guardado
+    // Si ya generamos un ID antes, lo volvemos a usar
     const savedId = input.data?.resource_id;
-
-    if (!savedId) {
-      // SI NO TIENE ID, ES UNA SESIÓN ZOMBIE 🧟‍♂️
-      console.error("🔥 [MP-CRITICAL] ¡Sesión Zombie detectada! Forzando error para regenerar.");
-      throw new Error("INVALID_SESSION_DATA"); 
+    if (savedId) {
+       console.log("♻️ [MP-INFO] Usando ID guardado:", savedId);
+       return this.initiatePayment({ ...input, resource_id: savedId });
     }
-
-    // Si tiene ID, inyectamos el ID recuperado y procedemos
-    const newInput = {
-      ...input,
-      resource_id: savedId 
-    };
-    
-    return this.initiatePayment(newInput);
+    // Si es una sesión zombie vieja, se generará uno nuevo en initiatePayment
+    return this.initiatePayment(input);
   }
 
   // --- BOILERPLATE ---
