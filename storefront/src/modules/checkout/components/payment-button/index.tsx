@@ -21,8 +21,17 @@ const PaymentButton: React.FC<PaymentButtonProps> = ({
   cart,
   "data-testid": dataTestId,
 }) => {
+  // Si el carrito todavía no está disponible, evitar crashes
+  if (!cart) {
+    return (
+      <Button disabled data-testid={dataTestId}>
+        Loading payment...
+      </Button>
+    )
+  }
+
   // 1. OBTENER LA SESIÓN
-  const paymentSession = cart.payment_collection?.payment_sessions?.[0]
+  const paymentSession = cart?.payment_collection?.payment_sessions?.[0]
   const providerId = paymentSession?.provider_id || "desconocido"
 
   // 🔍 LOG DE DEPURACIÓN (Mira esto en la consola F12 del navegador)
