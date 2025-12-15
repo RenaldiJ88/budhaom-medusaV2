@@ -88,6 +88,12 @@ async function getCountryCode(
  * Middleware to handle region selection and onboarding status.
  */
 export async function middleware(request: NextRequest) {
+  // 🔥 PASE VIP: Si la ruta empieza con /api, dejar pasar INMEDIATAMENTE.
+  // Esto evita que Next.js intente agregarle idioma o redirigir el webhook de MP.
+  if (request.nextUrl.pathname.startsWith('/api')) {
+    return NextResponse.next();
+  }
+
   const searchParams = request.nextUrl.searchParams
   const isOnboarding = searchParams.get("onboarding") === "true"
   const cartId = searchParams.get("cart_id")
