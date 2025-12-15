@@ -60,9 +60,8 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1)
       
       // ---------------------------------------------------------
-      // 2. URL Webhook (LA CORRECCIÓN CRÍTICA ESTÁ AQUÍ)
+      // 2. URL Webhook
       // ---------------------------------------------------------
-      // Tomamos la URL base.
       let webhookBase =
         process.env.NEXT_PUBLIC_APP_URL ||
         process.env.STORE_URL ||
@@ -71,8 +70,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       if (!webhookBase.startsWith("http")) webhookBase = `https://${webhookBase}`
       if (webhookBase.endsWith("/")) webhookBase = webhookBase.slice(0, -1)
 
-      // 🔥 FUERZA BRUTA: Eliminamos '/ar' o '/en' si están al final de la base.
-      // Esto asegura que la API Route siempre sea /api/..., nunca /ar/api/...
+      // Eliminamos '/ar' o '/en' si están al final
       webhookBase = webhookBase.replace(/\/ar$/, "").replace(/\/en$/, "");
 
       const webhookUrl = `${webhookBase}/api/webhooks/mercadopago`
@@ -80,8 +78,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       // ---------------------------------------------------------
       // 3. URL base para retorno al frontend (checkout/status)
       // ---------------------------------------------------------
-      // Para el retorno visual, SÍ podemos querer el /ar si el usuario estaba ahí.
-      // Usamos storeUrl que ya procesamos arriba o la app url normal.
       let appUrl =
         process.env.NEXT_PUBLIC_APP_URL ||
         process.env.NEXT_PUBLIC_BASE_URL ||
@@ -182,7 +178,17 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           ],
           payer: { email: input.email || "guest@test.com" },
           external_reference: cartId,
-          notification_url: webhookUrl, // <--- AHORA ESTA URL ES PURA
+          notification_url: webhookUrl,
+          
+          // --- AQUÍ ESTÁ EL CAMBIO ---
+          // Configuración explícita para SOLO RETIRO
+          shipments: {
+            mode: "not_specified", // Evita calculos automáticos de envíos
+            local_pickup: true,    // Habilita la opción "Lo retiro en domicilio del vendedor"
+            free_shipping: true,   // Asegura costo 0 de envío
+          },
+          // ---------------------------
+
           back_urls: {
             success: `${statusBaseUrl}?status=approved`,
             failure: `${statusBaseUrl}?status=failure`,
