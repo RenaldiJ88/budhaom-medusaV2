@@ -152,8 +152,11 @@ export async function POST(req: NextRequest) {
     // Buscamos si ya existe una orden para este carrito
     try {
       const existingCart = await sdk.store.cart.retrieve(cartId)
+      // `completed_at` no está tipado en `StoreCart` en el SDK, pero sí existe en runtime.
+      // Hacemos una aserción de tipo local para evitar el error de TypeScript sin cambiar el SDK.
+      const existingCartData = existingCart?.cart as any
       
-      if (existingCart?.cart?.completed_at) {
+      if (existingCartData?.completed_at) {
         console.log(
           "✅ [WEBHOOK-MP] Carrito ya completado, orden ya existe. Idempotencia aplicada."
         )

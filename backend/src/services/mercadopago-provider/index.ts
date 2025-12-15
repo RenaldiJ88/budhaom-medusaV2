@@ -50,37 +50,51 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     this.logger_.info(`🔥 [MP-DEBUG] Iniciando pago. Keys: ${inputInfo}`)
 
     try {
-      // 1. URL Saneada para la tienda (solo informativa)
+      // ---------------------------------------------------------
+      // 1. URL Saneada para la tienda (solo informativa / redirecciones)
+      // ---------------------------------------------------------
       let storeUrl = process.env.STORE_URL || "http://localhost:8000"
       if (!storeUrl.startsWith("http")) storeUrl = `http://${storeUrl}`
-
-      if (!storeUrl.includes("/ar") && !storeUrl.includes("localhost")) {
-        if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1)
-        storeUrl = `${storeUrl}/ar`
-      }
+      
+      // Limpieza básica
       if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1)
-
-      // 2. URL Webhook (API, puede llevar /ar en Next con i18n)
-      let webhookUrl =
+      
+      // ---------------------------------------------------------
+      // 2. URL Webhook (LA CORRECCIÓN CRÍTICA ESTÁ AQUÍ)
+      // ---------------------------------------------------------
+      // Tomamos la URL base.
+      let webhookBase =
         process.env.NEXT_PUBLIC_APP_URL ||
         process.env.STORE_URL ||
         "http://localhost:8000"
-      if (!webhookUrl.startsWith("http")) webhookUrl = `https://${webhookUrl}`
-      if (webhookUrl.endsWith("/")) webhookUrl = webhookUrl.slice(0, -1)
-      webhookUrl = `${webhookUrl}/api/webhooks/mercadopago`
 
+      if (!webhookBase.startsWith("http")) webhookBase = `https://${webhookBase}`
+      if (webhookBase.endsWith("/")) webhookBase = webhookBase.slice(0, -1)
+
+      // 🔥 FUERZA BRUTA: Eliminamos '/ar' o '/en' si están al final de la base.
+      // Esto asegura que la API Route siempre sea /api/..., nunca /ar/api/...
+      webhookBase = webhookBase.replace(/\/ar$/, "").replace(/\/en$/, "");
+
+      const webhookUrl = `${webhookBase}/api/webhooks/mercadopago`
+
+      // ---------------------------------------------------------
       // 3. URL base para retorno al frontend (checkout/status)
+      // ---------------------------------------------------------
+      // Para el retorno visual, SÍ podemos querer el /ar si el usuario estaba ahí.
+      // Usamos storeUrl que ya procesamos arriba o la app url normal.
       let appUrl =
         process.env.NEXT_PUBLIC_APP_URL ||
         process.env.NEXT_PUBLIC_BASE_URL ||
         storeUrl
+      
       if (!appUrl.startsWith("http")) appUrl = `https://${appUrl}`
       if (appUrl.endsWith("/")) appUrl = appUrl.slice(0, -1)
 
       const statusBaseUrl = `${appUrl}/checkout/status`
 
-      // 4. Obtener Cart ID (Estrategia defensiva mejorada)
-      // Intentamos múltiples estrategias para obtener el cart_id
+      // ---------------------------------------------------------
+      // 4. Obtener Cart ID (Estrategia defensiva)
+      // ---------------------------------------------------------
       let cartId =
         input.context?.cart_id ||
         input.cart_id ||
@@ -88,7 +102,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         input.resource_id ||
         input.id
 
-      // Si aún no tenemos cart_id, intentamos obtenerlo desde la sesión de pago usando el container
       if (!cartId && input.data?.session_id) {
         try {
           const paymentModuleService: IPaymentModuleService =
@@ -99,11 +112,9 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             `🔍 [MP-INFO] Buscando cart_id desde sesión: ${sessionId}`
           )
 
-          // Intentamos obtener la sesión de pago para extraer el resource_id (cart_id)
           const paymentSession: any =
             await paymentModuleService.retrievePaymentSession(sessionId)
 
-          // En Medusa 2.0, el resource_id puede estar en diferentes lugares
           const sessionResourceId =
             paymentSession?.resource_id ||
             paymentSession?.context?.resource_id ||
@@ -122,8 +133,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         }
       }
 
-      // Si aún no tenemos cart_id, usamos el session_id como último recurso
-      // Esto permitirá que el webhook pueda buscar la sesión y obtener el cart_id real
       if (!cartId) {
         cartId = input.data?.session_id || input.context?.idempotency_key
 
@@ -173,9 +182,8 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           ],
           payer: { email: input.email || "guest@test.com" },
           external_reference: cartId,
-          notification_url: webhookUrl,
+          notification_url: webhookUrl, // <--- AHORA ESTA URL ES PURA
           back_urls: {
-            // Nueva ruta limpia de estado de pago
             success: `${statusBaseUrl}?status=approved`,
             failure: `${statusBaseUrl}?status=failure`,
             pending: `${statusBaseUrl}?status=pending`,
@@ -195,7 +203,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
 
       this.logger_.info(`✅ [MP-SUCCESS] ID: ${response.id}`)
 
-      // Retorno LIMPIO (sin objetos raros para que Postgres no explote)
       return {
         id: response.id!,
         data: {
