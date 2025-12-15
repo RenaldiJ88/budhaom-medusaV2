@@ -43,6 +43,9 @@ export const isPaypal = (providerId?: string) => {
 export const isManual = (providerId?: string) => {
   return providerId?.startsWith("pp_system_default")
 }
+export const isMercadoPago = (providerId?: string) => {
+  return providerId?.includes("mercadopago") ?? false
+}
 
 // Add currencies that don't need to be divided by 100
 export const noDivisionCurrencies = [

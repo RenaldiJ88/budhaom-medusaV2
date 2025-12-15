@@ -11,7 +11,7 @@ import { StripeCardElementOptions } from "@stripe/stripe-js"
 
 import Divider from "@modules/common/components/divider"
 import PaymentContainer from "@modules/checkout/components/payment-container"
-import { isStripe as isStripeFunc, paymentInfoMap } from "@lib/constants"
+import { isStripe as isStripeFunc, isMercadoPago, paymentInfoMap } from "@lib/constants"
 import { StripeContext } from "@modules/checkout/components/payment-wrapper"
 import { initiatePaymentSession } from "@lib/data/cart"
 
@@ -41,6 +41,7 @@ const Payment = ({
   const isOpen = searchParams.get("step") === "payment"
 
   const isStripe = isStripeFunc(activeSession?.provider_id)
+  const isMercadoPagoProvider = isMercadoPago(activeSession?.provider_id) || isMercadoPago(selectedPaymentMethod)
   const stripeReady = useContext(StripeContext)
 
   const paidByGiftcard =
@@ -181,6 +182,16 @@ const Payment = ({
                       setCardComplete(e.complete)
                     }}
                   />
+                </div>
+              )}
+              {isMercadoPagoProvider && (
+                <div className="mt-5 transition-all duration-150 ease-in-out">
+                  <Text className="txt-medium-plus text-ui-fg-base mb-1">
+                    MercadoPago
+                  </Text>
+                  <Text className="txt-medium text-ui-fg-subtle">
+                    Serás redirigido a MercadoPago al finalizar la compra para completar el pago de forma segura.
+                  </Text>
                 </div>
               )}
             </>
