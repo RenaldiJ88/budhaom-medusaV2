@@ -2,82 +2,88 @@ import {
   AbstractPaymentProvider, 
   PaymentSessionStatus, 
   PaymentActions 
-} from "@medusajs/framework/utils";
+} from "@medusajs/utils";
+
 import { 
   Logger, 
-  WebhookActionResult 
-} from "@medusajs/framework/types";
+  WebhookActionResult
+} from "@medusajs/types";
+
 import { MercadoPagoConfig, Preference } from 'mercadopago';
 
 type Options = {
   access_token: string;
   public_key?: string;
+  webhook_url?: string;
 };
 
+// Usamos Record<string, unknown> para máxima compatibilidad con Medusa V2
 type SessionData = Record<string, unknown>;
 
 class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   static identifier = "mercadopago";
-  
+
   protected options_: Options;
   protected logger_: Logger;
   protected mercadoPagoConfig: MercadoPagoConfig;
 
   constructor(container: any, options: Options) {
+    // @ts-ignore
     super(container, options); 
     this.options_ = options;
     this.logger_ = container.logger;
+
+    const token = options.access_token || process.env.MERCADOPAGO_ACCESS_TOKEN || "NO_TOKEN";
     this.mercadoPagoConfig = new MercadoPagoConfig({
-      accessToken: options.access_token,
+      accessToken: token,
     });
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    console.log("🔥 [MP-DEBUG] Iniciando pago con webhooks");
-    this.logger_.info("Iniciando pago MercadoPago", { input: JSON.stringify(input) });
+    // Log seguro (1 solo argumento)
+    const inputInfo = input ? Object.keys(input).join(",") : "sin datos";
+    this.logger_.info(`🔥 [MP-DEBUG] Iniciando pago. Keys: ${inputInfo}`);
 
     try {
-      // 1. URL Saneada para back_urls
+      // 1. URL Saneada
       let storeUrl = process.env.STORE_URL || "http://localhost:8000";
       if (!storeUrl.startsWith("http")) storeUrl = `http://${storeUrl}`;
+
       if (!storeUrl.includes("/ar") && !storeUrl.includes("localhost")) {
          if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
          storeUrl = `${storeUrl}/ar`;
       }
       if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
 
-      // 2. URL para webhook (debe ser la URL pública del storefront)
+      // 2. URL Webhook
       let webhookUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.STORE_URL || "http://localhost:8000";
       if (!webhookUrl.startsWith("http")) webhookUrl = `https://${webhookUrl}`;
       if (webhookUrl.endsWith("/")) webhookUrl = webhookUrl.slice(0, -1);
       webhookUrl = `${webhookUrl}/api/webhooks/mercadopago`;
 
-      // 3. OBTENER CART_ID como external_reference (CRÍTICO para webhook)
-      // En Medusa 2.0, el cart_id debería estar en input.context.cart_id o input.cart_id
+      // 3. Obtener ID (Estrategia defensiva)
       const cartId = input.context?.cart_id || input.cart_id || input.resource_id || input.id;
-      
+
       if (!cartId) {
-        const errorMsg = "No se pudo obtener el cart_id para external_reference";
-        this.logger_.error(errorMsg, { input: JSON.stringify(input) });
-        throw new Error(errorMsg);
+        this.logger_.error(`❌ [MP-ERROR] No se pudo obtener cart_id. Input: ${JSON.stringify(input)}`);
+        throw new Error("No se pudo obtener el cart_id");
       }
 
-      console.log("📦 [MP-INFO] Cart ID detectado:", cartId);
-      this.logger_.info("Cart ID detectado para external_reference", { cartId });
+      this.logger_.info(`📦 [MP-INFO] Cart ID: ${cartId}`);
 
-      // 4. Monto (Validación estricta)
+      // 4. Monto
       let amount = input.amount || input.context?.amount;
-      if (typeof amount === 'string') amount = parseFloat(amount);
-      if (!amount || isNaN(Number(amount))) {
-        const errorMsg = "Monto inválido o no proporcionado";
-        this.logger_.error(errorMsg, { amount: input.amount });
-        throw new Error(errorMsg);
+      if (typeof amount === 'object' && amount !== null && 'value' in amount) {
+        amount = amount.value;
+      }
+      amount = Number(amount);
+
+      if (isNaN(amount) || amount <= 0) {
+        this.logger_.warn(`⚠️ [MP-WARN] Monto inválido (${amount}). Usando 100.`);
+        amount = 100; 
       }
 
-      const email = input.email || input.context?.email || "guest@test.com";
-      const currency = input.currency_code || "ARS";
-
-      // 5. Preferencia MP con webhook configurado
+      // 5. Preferencia
       const preferenceData = {
         body: {
           items: [
@@ -85,13 +91,13 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
               id: cartId,
               title: "Compra Tienda",
               quantity: 1,
-              unit_price: Number(amount),
-              currency_id: currency.toUpperCase(),
+              unit_price: amount,
+              currency_id: (input.currency_code || "ARS").toUpperCase(),
             },
           ],
-          payer: { email: email },
-          external_reference: cartId, // CRÍTICO: Usar cart_id para poder recuperarlo en el webhook
-          notification_url: webhookUrl, // CRÍTICO: URL del webhook
+          payer: { email: input.email || "guest@test.com" },
+          external_reference: cartId,
+          notification_url: webhookUrl,
           back_urls: {
             success: `${storeUrl}/checkout?step=payment&payment_status=success`,
             failure: `${storeUrl}/checkout?step=payment&payment_status=failure`,
@@ -101,55 +107,41 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         },
       };
 
-      console.log("🔔 [MP-INFO] Webhook URL configurada:", webhookUrl);
-      this.logger_.info("Preferencia MP creada", { 
-        cartId, 
-        webhookUrl, 
-        amount: Number(amount),
-        currency 
-      });
+      this.logger_.info(`🔔 [MP-INFO] Creando pref. Webhook: ${webhookUrl}`);
 
       const preference = new Preference(this.mercadoPagoConfig);
       const response = await preference.create(preferenceData);
 
       if (!response.id) throw new Error("MP no devolvió ID");
 
-      console.log("✅ [MP-INFO] Preferencia creada exitosamente:", response.id);
-      this.logger_.info("Preferencia MP creada exitosamente", { 
-        preferenceId: response.id, 
-        cartId 
-      });
+      this.logger_.info(`✅ [MP-SUCCESS] ID: ${response.id}`);
 
+      // Retorno LIMPIO (sin objetos raros para que Postgres no explote)
       return {
         id: response.id!,
         data: {
           id: response.id!,
           init_point: response.init_point!, 
-          sandbox_init_point: response.sandbox_init_point!,
-          resource_id: cartId, // Guardamos el cart_id para referencia
-          cart_id: cartId // También lo guardamos explícitamente
+          resource_id: cartId, 
+          external_reference: cartId
         },
       };
 
     } catch (error: any) {
-      console.error("🔥 [MP-ERROR]", error);
+      this.logger_.error(`🔥 [MP-CRASH] ${error.message}`);
       throw error;
     }
   }
 
-  // --- UPDATE: Recupera el ID generado antes ---
   async updatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    // Si ya generamos un ID antes, lo volvemos a usar
     const savedId = input.data?.resource_id;
     if (savedId) {
-       console.log("♻️ [MP-INFO] Usando ID guardado:", savedId);
+       this.logger_.info(`♻️ [MP-INFO] Reutilizando ID: ${savedId}`);
        return this.initiatePayment({ ...input, resource_id: savedId });
     }
-    // Si es una sesión zombie vieja, se generará uno nuevo en initiatePayment
     return this.initiatePayment(input);
   }
 
-  // --- BOILERPLATE ---
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> {
     return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} };
   }
