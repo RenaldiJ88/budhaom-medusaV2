@@ -53,6 +53,9 @@ importers:
       medusajs-launch-utils:
         specifier: 0.0.18
         version: 0.0.18
+      mercadopago:
+        specifier: ^2.11.0
+        version: 2.11.0
       next:
         specifier: ^14.0.0
         version: 14.2.21(@babel/core@7.26.0)(@playwright/test@1.49.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -2685,6 +2688,9 @@ packages:
   meilisearch@0.25.1:
     resolution: {integrity: sha512-20jO0pK9BhghxHSkOLbdoYn58h/Z0PNL3JQcRq7ipNIeqrxkAetCZZ6ttJC3uxcz0jVglmiFoSXu3Z/lEOLOLQ==}
 
+  mercadopago@2.11.0:
+    resolution: {integrity: sha512-Etv7sBwQp8ZW179W5wAGc7JFmfFOeJttQSeN1HuDrwU38YOIi+nYdKN+2KTgR9/F1S8oOGMlkVPthyIwOF5BXQ==}
+
   merge-stream@2.0.0:
     resolution: {integrity: sha512-abv/qOcuPfk3URPfDzmZU1LKmuw8kT+0nIHvKrKgFrwifol/doWcdA4ZqsWQ8ENrFKkd67Mfpo/LovbIUsbt3w==}
 
@@ -3568,6 +3574,10 @@ packages:
 
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
+
+  uuid@9.0.1:
+    resolution: {integrity: sha512-b+1eJOlsR9K8HJpow9Ok3fiWOWSIcIzXodvv0rQjVoOVNpWMpxf1wZNpt4y9h10odCNrqnYp1OBzRktckBe3sA==}
+    hasBin: true
 
   v8-compile-cache@2.4.0:
     resolution: {integrity: sha512-ocyWc3bAHBB/guyqJQVI5o4BZkPhznPYUG2ea80Gond/BgNWpap8TOmLSeeQG7bnh2KMISxskdADG59j7zruhw==}
@@ -6951,6 +6961,13 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
+  mercadopago@2.11.0:
+    dependencies:
+      node-fetch: 2.7.0
+      uuid: 9.0.1
+    transitivePeerDependencies:
+      - encoding
+
   merge-stream@2.0.0: {}
 
   merge2@1.4.1: {}
@@ -7907,6 +7924,8 @@ snapshots:
       react: 18.3.1
 
   util-deprecate@1.0.2: {}
+
+  uuid@9.0.1: {}
 
   v8-compile-cache@2.4.0: {}
 
