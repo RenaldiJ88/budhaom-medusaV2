@@ -34,28 +34,30 @@ export const MercadoPagoPaymentButton = ({
       // ============================================================
       // PASO 1: Verificar y completar shipping_address si falta
       // ============================================================
-      if (!cart.shipping_address || !cart.shipping_address.country_code) {
-        console.log("🌎 [MP-BUTTON] Cart sin shipping_address. Agregando dirección por defecto...")
+      // Verificar si falta country_code en shipping_address
+      if (!cart.shipping_address?.country_code) {
+        console.log("🌎 [MP-BUTTON] Cart sin shipping_address.country_code. Agregando dirección por defecto...")
         
         try {
           await sdk.store.cart.update(cart.id, {
             shipping_address: {
-              first_name: cart.shipping_address?.first_name || "Guest",
-              last_name: cart.shipping_address?.last_name || "Pickup",
-              address_1: cart.shipping_address?.address_1 || "Local Pickup",
               country_code: "ar", // Argentina por defecto
+              first_name: "Guest",
+              last_name: "Pickup",
+              address_1: "Pickup",
             },
           })
           console.log("✅ [MP-BUTTON] shipping_address actualizado con country_code (AR)")
         } catch (updateError: any) {
-          console.warn("⚠️ [MP-BUTTON] Error al actualizar shipping_address:", updateError.message)
-          // Continuamos de todas formas
+          console.error("❌ [MP-BUTTON] Error crítico al actualizar shipping_address:", updateError.message)
+          throw new Error("No se pudo completar la dirección de envío. Por favor, intenta nuevamente.")
         }
       }
 
       // ============================================================
       // PASO 2: Verificar y agregar shipping_method si falta
       // ============================================================
+      // Verificar si shipping_methods está vacío
       const hasShippingMethods = 
         Array.isArray(cart.shipping_methods) && cart.shipping_methods.length > 0
 
@@ -63,6 +65,7 @@ export const MercadoPagoPaymentButton = ({
         console.log("🚚 [MP-BUTTON] Cart sin shipping_methods. Buscando opciones...")
         
         try {
+          // Listar opciones de envío disponibles
           const optionsRes = await sdk.store.fulfillment.listCartOptions({ cart_id: cart.id })
           
           const shippingOptions = 
@@ -72,19 +75,22 @@ export const MercadoPagoPaymentButton = ({
             []
 
           if (Array.isArray(shippingOptions) && shippingOptions.length > 0) {
+            // Tomar la primera opción disponible
             const defaultOption = shippingOptions[0]
             console.log("📦 [MP-BUTTON] Agregando shipping_method por defecto:", defaultOption.id)
             
+            // Agregar el método de envío al cart
             await sdk.store.cart.addShippingMethod(cart.id, {
               option_id: defaultOption.id,
             })
             console.log("✅ [MP-BUTTON] Shipping_method agregado correctamente")
           } else {
             console.warn("⚠️ [MP-BUTTON] No hay opciones de envío disponibles")
+            throw new Error("No hay opciones de envío disponibles para este carrito.")
           }
         } catch (shippingError: any) {
-          console.warn("⚠️ [MP-BUTTON] Error al agregar shipping_method:", shippingError.message)
-          // Continuamos de todas formas - el webhook puede fallar pero al menos intentamos
+          console.error("❌ [MP-BUTTON] Error crítico al agregar shipping_method:", shippingError.message)
+          throw new Error("No se pudo agregar el método de envío. Por favor, intenta nuevamente.")
         }
       }
 
