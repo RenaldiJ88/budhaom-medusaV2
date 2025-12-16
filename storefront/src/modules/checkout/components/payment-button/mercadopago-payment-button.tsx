@@ -2,6 +2,7 @@
 
 import { Button } from "@medusajs/ui"
 import { useState } from "react"
+import { sdk } from "@lib/config"
 
 export const MercadoPagoPaymentButton = ({
   notReady,
@@ -13,6 +14,7 @@ export const MercadoPagoPaymentButton = ({
   session: any
 }) => {
   const [submitting, setSubmitting] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
   
   // 🔍 LOGS PARA DEPURAR EN EL NAVEGADOR
   // Abre la consola con F12 y mira esto:
@@ -20,18 +22,86 @@ export const MercadoPagoPaymentButton = ({
   console.log("🎨 [FRONTEND] Datos de sesión:", session)
   console.log("🎨 [FRONTEND] Link encontrado:", session?.data?.init_point)
 
-  const handlePayment = () => {
+  const handlePayment = async () => {
     setSubmitting(true)
+    setErrorMessage(null)
 
-    // Buscamos el link que tu backend generó (el que vimos en el log 5)
-    const paymentLink = session?.data?.init_point || session?.data?.sandbox_init_point
+    try {
+      if (!cart?.id) {
+        throw new Error("Cart ID no disponible")
+      }
 
-    if (paymentLink) {
-      console.log("🚀 Redirigiendo a:", paymentLink)
-      window.location.href = paymentLink
-    } else {
-      console.error("❌ ERROR: El frontend no ve el link todavía.")
-      alert("Error: El link de pago no llegó al frontend. Revisa la consola (F12).")
+      // ============================================================
+      // PASO 1: Verificar y completar shipping_address si falta
+      // ============================================================
+      if (!cart.shipping_address || !cart.shipping_address.country_code) {
+        console.log("🌎 [MP-BUTTON] Cart sin shipping_address. Agregando dirección por defecto...")
+        
+        try {
+          await sdk.store.cart.update(cart.id, {
+            shipping_address: {
+              first_name: cart.shipping_address?.first_name || "Guest",
+              last_name: cart.shipping_address?.last_name || "Pickup",
+              address_1: cart.shipping_address?.address_1 || "Local Pickup",
+              country_code: "ar", // Argentina por defecto
+            },
+          })
+          console.log("✅ [MP-BUTTON] shipping_address actualizado con country_code (AR)")
+        } catch (updateError: any) {
+          console.warn("⚠️ [MP-BUTTON] Error al actualizar shipping_address:", updateError.message)
+          // Continuamos de todas formas
+        }
+      }
+
+      // ============================================================
+      // PASO 2: Verificar y agregar shipping_method si falta
+      // ============================================================
+      const hasShippingMethods = 
+        Array.isArray(cart.shipping_methods) && cart.shipping_methods.length > 0
+
+      if (!hasShippingMethods) {
+        console.log("🚚 [MP-BUTTON] Cart sin shipping_methods. Buscando opciones...")
+        
+        try {
+          const optionsRes = await sdk.store.fulfillment.listCartOptions({ cart_id: cart.id })
+          
+          const shippingOptions = 
+            (optionsRes as any)?.shipping_options ||
+            (optionsRes as any)?.fulfillment_options ||
+            (optionsRes as any)?.options ||
+            []
+
+          if (Array.isArray(shippingOptions) && shippingOptions.length > 0) {
+            const defaultOption = shippingOptions[0]
+            console.log("📦 [MP-BUTTON] Agregando shipping_method por defecto:", defaultOption.id)
+            
+            await sdk.store.cart.addShippingMethod(cart.id, {
+              option_id: defaultOption.id,
+            })
+            console.log("✅ [MP-BUTTON] Shipping_method agregado correctamente")
+          } else {
+            console.warn("⚠️ [MP-BUTTON] No hay opciones de envío disponibles")
+          }
+        } catch (shippingError: any) {
+          console.warn("⚠️ [MP-BUTTON] Error al agregar shipping_method:", shippingError.message)
+          // Continuamos de todas formas - el webhook puede fallar pero al menos intentamos
+        }
+      }
+
+      // ============================================================
+      // PASO 3: Redirigir a MercadoPago
+      // ============================================================
+      const paymentLink = session?.data?.init_point || session?.data?.sandbox_init_point
+
+      if (paymentLink) {
+        console.log("🚀 [MP-BUTTON] Redirigiendo a MercadoPago:", paymentLink)
+        window.location.href = paymentLink
+      } else {
+        throw new Error("El link de pago no está disponible. Por favor, recarga la página.")
+      }
+    } catch (error: any) {
+      console.error("❌ [MP-BUTTON] Error al procesar pago:", error)
+      setErrorMessage(error.message || "Error al procesar el pago. Por favor, intenta nuevamente.")
       setSubmitting(false)
     }
   }
@@ -39,24 +109,24 @@ export const MercadoPagoPaymentButton = ({
   return (
     <div className="flex flex-col gap-2">
       <Button
-        // 🔥 AQUÍ ESTÁ EL CAMBIO: Quitamos "notReady" para que puedas hacer clic SIEMPRE
-        disabled={submitting} 
+        disabled={submitting || !session?.data?.init_point} 
         onClick={handlePayment}
         size="large"
-        className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white" // Le puse azul para que destaque
+        isLoading={submitting}
+        className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white"
       >
-        {submitting ? (
-          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-        ) : (
-          // Mostramos el texto dependiendo de si detectamos el link o no
-          session?.data?.init_point ? "PAGAR CON MERCADO PAGO (Listo)" : "PAGAR (Forzar click)"
-        )}
+        {submitting ? "Preparando pago..." : "PAGAR CON MERCADO PAGO"}
       </Button>
 
-      {/* Mensaje de ayuda si el botón debería estar bloqueado */}
-      {notReady && (
+      {errorMessage && (
+        <p className="text-xs text-red-500 text-center mt-2">
+          {errorMessage}
+        </p>
+      )}
+
+      {notReady && !errorMessage && (
         <p className="text-xs text-orange-500 text-center">
-          Advertencia: Faltan datos de envío (notReady es true), pero el botón está desbloqueado para pruebas.
+          Completando datos de envío automáticamente...
         </p>
       )}
     </div>

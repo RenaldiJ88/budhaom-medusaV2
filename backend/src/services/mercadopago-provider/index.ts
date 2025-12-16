@@ -49,6 +49,22 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     const inputInfo = input ? Object.keys(input).join(",") : "sin datos"
     this.logger_.info(`🔥 [MP-DEBUG] Iniciando pago. Keys: ${inputInfo}`)
 
+    // Defensivo: Verificar cart con optional chaining para evitar crashes
+    try {
+      const cart = input?.context?.cart || input?.cart
+      if (cart) {
+        const paymentSessions = cart?.payment_collection?.payment_sessions
+        if (paymentSessions) {
+          this.logger_.info(`✅ [MP-INIT] Cart tiene ${paymentSessions.length} payment_sessions`)
+        } else {
+          this.logger_.warn(`⚠️ [MP-INIT] Cart no tiene payment_collection o payment_sessions`)
+        }
+      }
+    } catch (err: any) {
+      this.logger_.warn(`⚠️ [MP-INIT] Error al acceder a payment_collection: ${err.message}`)
+      // NO lanzamos el error, continuamos con el flujo normal
+    }
+
     try {
       // ---------------------------------------------------------
       // 1. URL Saneada para la tienda (solo informativa / redirecciones)
@@ -234,12 +250,30 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> {
+    // Defensivo: Si el input contiene cart, usar optional chaining
+    try {
+      const cart = input?.context?.cart || input?.cart
+      if (cart && cart.payment_collection?.payment_sessions) {
+        this.logger_.info(`✅ [MP-AUTH] Cart tiene payment_collection válido`)
+      }
+    } catch (err: any) {
+      this.logger_.warn(`⚠️ [MP-AUTH] Error al acceder a payment_collection: ${err.message}`)
+    }
     return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} };
   }
   async cancelPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async capturePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async deletePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
-  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { 
+  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> {
+    // Defensivo: Si el input contiene cart, usar optional chaining
+    try {
+      const cart = input?.context?.cart || input?.cart
+      if (cart && cart?.payment_collection?.payment_sessions) {
+        this.logger_.info(`✅ [MP-STATUS] Cart tiene payment_collection válido`)
+      }
+    } catch (err: any) {
+      this.logger_.warn(`⚠️ [MP-STATUS] Error al acceder a payment_collection: ${err.message}`)
+    }
     return { status: PaymentSessionStatus.AUTHORIZED }; 
   }
   async refundPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
