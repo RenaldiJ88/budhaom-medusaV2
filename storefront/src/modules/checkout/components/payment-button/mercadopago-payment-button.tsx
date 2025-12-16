@@ -16,11 +16,8 @@ export const MercadoPagoPaymentButton = ({
   const [submitting, setSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   
-  // 🔍 LOGS PARA DEPURAR EN EL NAVEGADOR
-  // Abre la consola con F12 y mira esto:
-  console.log("🎨 [FRONTEND] Estado notReady:", notReady)
-  console.log("🎨 [FRONTEND] Datos de sesión:", session)
-  console.log("🎨 [FRONTEND] Link encontrado:", session?.data?.init_point)
+  // 🔍 LOGS PARA DEPURAR (Opcional)
+  // console.log("🎨 [FRONTEND] Link encontrado:", session?.data?.init_point)
 
   const handlePayment = async () => {
     setSubmitting(true)
@@ -28,44 +25,45 @@ export const MercadoPagoPaymentButton = ({
 
     try {
       if (!cart?.id) {
-        throw new Error("Cart ID no disponible")
+        throw new Error("Cart ID no disponible - Por favor recarga la página")
       }
 
       // ============================================================
       // PASO 1: Verificar y completar shipping_address si falta
       // ============================================================
-      // Verificar si falta country_code en shipping_address
+      // Si el usuario eligió "Retiro" a veces no hay country_code
       if (!cart.shipping_address?.country_code) {
-        console.log("🌎 [MP-BUTTON] Cart sin shipping_address.country_code. Agregando dirección por defecto...")
+        console.log("🌎 [MP-BUTTON] Agregando dirección 'pickup' por defecto...")
         
         try {
           await sdk.store.cart.update(cart.id, {
             shipping_address: {
               country_code: "ar", // Argentina por defecto
-              first_name: "Guest",
-              last_name: "Pickup",
-              address_1: "Pickup",
+              first_name: "Retiro",
+              last_name: "Local",
+              address_1: "Punto de Retiro",
+              city: "Buenos Aires",
+              postal_code: "1000"
             },
           })
-          console.log("✅ [MP-BUTTON] shipping_address actualizado con country_code (AR)")
+          console.log("✅ [MP-BUTTON] Dirección actualizada")
         } catch (updateError: any) {
-          console.error("❌ [MP-BUTTON] Error crítico al actualizar shipping_address:", updateError.message)
-          throw new Error("No se pudo completar la dirección de envío. Por favor, intenta nuevamente.")
+          console.error("❌ [MP-BUTTON] Error address:", updateError.message)
+          // No lanzamos error para intentar seguir si es posible
         }
       }
 
       // ============================================================
       // PASO 2: Verificar y agregar shipping_method si falta
       // ============================================================
-      // Verificar si shipping_methods está vacío
       const hasShippingMethods = 
         Array.isArray(cart.shipping_methods) && cart.shipping_methods.length > 0
 
       if (!hasShippingMethods) {
-        console.log("🚚 [MP-BUTTON] Cart sin shipping_methods. Buscando opciones...")
+        console.log("🚚 [MP-BUTTON] Buscando método de envío por defecto...")
         
         try {
-          // Listar opciones de envío disponibles
+          // Listar opciones
           const optionsRes = await sdk.store.fulfillment.listCartOptions({ cart_id: cart.id })
           
           const shippingOptions = 
@@ -75,22 +73,18 @@ export const MercadoPagoPaymentButton = ({
             []
 
           if (Array.isArray(shippingOptions) && shippingOptions.length > 0) {
-            // Tomar la primera opción disponible
+            // Usar la primera opción (usualmente Retiro o Standard)
             const defaultOption = shippingOptions[0]
-            console.log("📦 [MP-BUTTON] Agregando shipping_method por defecto:", defaultOption.id)
             
-            // Agregar el método de envío al cart
             await sdk.store.cart.addShippingMethod(cart.id, {
               option_id: defaultOption.id,
             })
-            console.log("✅ [MP-BUTTON] Shipping_method agregado correctamente")
+            console.log("✅ [MP-BUTTON] Método de envío agregado:", defaultOption.id)
           } else {
-            console.warn("⚠️ [MP-BUTTON] No hay opciones de envío disponibles")
-            throw new Error("No hay opciones de envío disponibles para este carrito.")
+            console.warn("⚠️ [MP-BUTTON] No se encontraron métodos de envío.")
           }
         } catch (shippingError: any) {
-          console.error("❌ [MP-BUTTON] Error crítico al agregar shipping_method:", shippingError.message)
-          throw new Error("No se pudo agregar el método de envío. Por favor, intenta nuevamente.")
+          console.error("❌ [MP-BUTTON] Error shipping:", shippingError.message)
         }
       }
 
@@ -100,14 +94,14 @@ export const MercadoPagoPaymentButton = ({
       const paymentLink = session?.data?.init_point || session?.data?.sandbox_init_point
 
       if (paymentLink) {
-        console.log("🚀 [MP-BUTTON] Redirigiendo a MercadoPago:", paymentLink)
+        console.log("🚀 [MP-BUTTON] Redirigiendo a:", paymentLink)
         window.location.href = paymentLink
       } else {
-        throw new Error("El link de pago no está disponible. Por favor, recarga la página.")
+        throw new Error("El link de pago no está listo. Intenta de nuevo en unos segundos.")
       }
     } catch (error: any) {
-      console.error("❌ [MP-BUTTON] Error al procesar pago:", error)
-      setErrorMessage(error.message || "Error al procesar el pago. Por favor, intenta nuevamente.")
+      console.error("❌ [MP-BUTTON] Error final:", error)
+      setErrorMessage(error.message || "Error al iniciar el pago.")
       setSubmitting(false)
     }
   }
@@ -119,20 +113,15 @@ export const MercadoPagoPaymentButton = ({
         onClick={handlePayment}
         size="large"
         isLoading={submitting}
-        className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white"
+        className="w-full mt-4"
+        style={{ backgroundColor: "#009ee3", color: "white" }} // Azul MercadoPago
       >
-        {submitting ? "Preparando pago..." : "PAGAR CON MERCADO PAGO"}
+        {submitting ? "Procesando..." : "PAGAR CON MERCADO PAGO"}
       </Button>
 
       {errorMessage && (
         <p className="text-xs text-red-500 text-center mt-2">
           {errorMessage}
-        </p>
-      )}
-
-      {notReady && !errorMessage && (
-        <p className="text-xs text-orange-500 text-center">
-          Completando datos de envío automáticamente...
         </p>
       )}
     </div>
