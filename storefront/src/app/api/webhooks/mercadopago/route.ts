@@ -143,8 +143,47 @@ export async function POST(req: NextRequest) {
         }
 
         // ============================================================
-        // PASO 2: Agregar shipping method (DEFENSIVO - no falla si el cart ya no existe)
+        // PASO 2: Asegurar contexto de país + agregar shipping method
         // ============================================================
+        // 2.1. Si no hay country_code en la dirección de envío, forzamos una por defecto (AR)
+        if (!existingCart?.shipping_address?.country_code) {
+          console.log(
+            "🌎 [WEBHOOK-MP] Cart sin country_code en shipping_address. Forzando contexto por defecto (AR)..."
+          )
+
+          try {
+            await sdk.store.cart.update(cartId, {
+              shipping_address: {
+                // País por defecto para calcular región / opciones de envío
+                country_code: "ar",
+                // Datos dummy mínimos para que Medusa acepte la dirección
+                first_name:
+                  (existingCart as any)?.shipping_address?.first_name || "Guest",
+                last_name:
+                  (existingCart as any)?.shipping_address?.last_name || "Guest",
+              },
+            })
+
+            console.log(
+              "✅ [WEBHOOK-MP] shipping_address actualizado con country_code por defecto (AR)"
+            )
+          } catch (updateAddressError: any) {
+            const errorStatus =
+              updateAddressError.status ||
+              updateAddressError.statusCode ||
+              updateAddressError.response?.status
+
+            console.warn(
+              "⚠️ [WEBHOOK-MP] No se pudo actualizar shipping_address (se continuará igualmente):",
+              {
+                message: updateAddressError.message,
+                status: errorStatus,
+              }
+            )
+          }
+        }
+
+        // 2.2. Agregar shipping method (DEFENSIVO - no falla si el cart ya no existe)
         const hasShippingMethods =
           existingCart &&
           Array.isArray(existingCart.shipping_methods) &&
