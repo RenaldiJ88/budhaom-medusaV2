@@ -54,11 +54,13 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       }
 
       // 2. CONFIGURACIÓN DE URL
+      // Usamos estrictamente lo que diga la variable de entorno STORE_URL sin inventar regiones
       let storeUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
-      if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
       
-      // Ajuste de región (si tu url base no tiene /ar y lo necesitas)
-      const redirectUrl = storeUrl.includes("/ar") ? storeUrl : `${storeUrl}/ar`;
+      // Solo quitamos la barra final si existe para evitar dobles barras //
+      if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
+
+      const redirectUrl = storeUrl; // Sin forzar /ar
 
       // 3. DATOS MONETARIOS (Con fallback para no dar error 500)
       let amount = input.amount || input.context?.amount;
