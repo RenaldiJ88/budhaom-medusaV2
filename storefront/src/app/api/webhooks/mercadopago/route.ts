@@ -102,161 +102,43 @@ export async function POST(req: NextRequest) {
 
       console.log("🛒 [WEBHOOK-MP] Cart ID encontrado:", cartId)
 
-      // 5. COMPLETAR ORDEN EN MEDUSA (SIMPLIFICADO - el cart ya debe estar válido desde el frontend)
+      // 5. Completar orden en Medusa
       try {
-        // Verificación temprana de idempotencia (opcional, pero útil)
-        try {
-          const existingCartRes = await sdk.store.cart.retrieve(cartId)
-          const existingCart = existingCartRes?.cart as
-            | (typeof existingCartRes.cart & {
-                completed_at?: string | Date | null
-              })
-            | undefined
+        const completion = await sdk.store.cart.complete(cartId)
 
-          if (existingCart?.completed_at) {
-            console.log(
-              "✅ [WEBHOOK-MP] Carrito ya completado. Idempotencia aplicada."
-            )
-            return NextResponse.json(
-              { message: "Already completed", cart_id: cartId },
-              { status: 200 }
-            )
-          }
-        } catch (retrieveError: any) {
-          // Si el cart no existe (404), puede ser que ya se convirtió en order
-          if (retrieveError.status === 404 || retrieveError.statusCode === 404) {
-            console.log(
-              "✅ [WEBHOOK-MP] Cart no encontrado (404). Ya convertido a order. Idempotencia aplicada."
-            )
-            return NextResponse.json(
-              { message: "Cart already converted to order", cart_id: cartId },
-              { status: 200 }
-            )
-          }
-          // Otros errores: continuamos e intentamos completar de todas formas
-        }
-
-        // Intentar completar el carrito
-        console.log("🚀 [WEBHOOK-MP] Intentando completar carrito en Medusa...")
-        
-        try {
-          const completion = await sdk.store.cart.complete(cartId)
-
-          if (completion?.type === "order" && completion?.order) {
-            console.log(
-              "🎉 [WEBHOOK-MP] ¡ORDEN CREADA EXITOSAMENTE! ID:",
-              completion.order.id
-            )
-            return NextResponse.json(
-              { status: "success", order_id: completion.order.id, cart_id: cartId },
-              { status: 200 }
-            )
-          } else {
-            console.warn(
-              "⚠️ [WEBHOOK-MP] Respuesta inesperada al completar:",
-              completion?.type
-            )
-            // Retornar 200 OK igual para evitar loops de reintentos
-            return NextResponse.json(
-              { status: "unexpected_response", cart_id: cartId },
-              { status: 200 }
-            )
-          }
-        } catch (completeError: any) {
-          // ============================================================
-          // MANEJO DE ERRORES: SIEMPRE RETORNAR 200 OK
-          // ============================================================
-          const errorMessage = completeError.message || ""
-          const errorStatus =
-            completeError.status ||
-            completeError.statusCode ||
-            completeError.response?.status
-
-          // Caso 1: Transaction already started
-          if (
-            errorMessage.toLowerCase().includes("transaction already started") ||
-            errorMessage.toLowerCase().includes("transaction in progress")
-          ) {
-            console.log(
-              "✅ [WEBHOOK-MP] Transaction ya iniciada por otro webhook. Idempotencia aplicada."
-            )
-            return NextResponse.json(
-              { message: "Transaction already started", cart_id: cartId },
-              { status: 200 }
-            )
-          }
-
-          // Caso 2: Cart not found (404)
-          if (errorStatus === 404) {
-            console.log(
-              "✅ [WEBHOOK-MP] Cart no encontrado (404). Ya convertido a order. Idempotencia aplicada."
-            )
-            return NextResponse.json(
-              { message: "Cart already converted to order", cart_id: cartId },
-              { status: 200 }
-            )
-          }
-
-          // Caso 3: Conflict (409) o idempotency
-          if (
-            errorStatus === 409 ||
-            errorMessage.toLowerCase().includes("idempotency") ||
-            errorMessage.toLowerCase().includes("already exists") ||
-            errorMessage.toLowerCase().includes("duplicate")
-          ) {
-            console.log(
-              "✅ [WEBHOOK-MP] Conflicto de idempotencia detectado. Orden ya procesada."
-            )
-            return NextResponse.json(
-              { message: "Order already processed (idempotency)", cart_id: cartId },
-              { status: 200 }
-            )
-          }
-
-          // Caso 4: Cart already completed
-          if (
-            errorMessage.toLowerCase().includes("completed") ||
-            errorMessage.toLowerCase().includes("already completed")
-          ) {
-            console.log(
-              "✅ [WEBHOOK-MP] Cart ya completado. Idempotencia aplicada."
-            )
-            return NextResponse.json(
-              { message: "Cart already completed", cart_id: cartId },
-              { status: 200 }
-            )
-          }
-
-          // Caso 5: Cualquier otro error (400, 500, etc.) - SIEMPRE RETORNAR 200 OK
-          console.error("❌ [WEBHOOK-MP] Error al completar carrito (retornando 200 OK para evitar loops):", {
-            message: errorMessage,
-            status: errorStatus,
-            stack: completeError.stack,
-            cart_id: cartId,
-          })
-          
-          // CRÍTICO: Siempre retornar 200 OK, incluso para errores 500
-          // Esto evita que MercadoPago siga reintentando y spameando el webhook
+        if (completion?.type === "order" && completion?.order) {
+          console.log(
+            "🎉 [WEBHOOK-MP] Orden creada exitosamente:",
+            completion.order.id
+          )
           return NextResponse.json(
-            {
-              error: "Error during completion (acknowledged)",
-              cart_id: cartId,
-              error_type: "completion_error",
-              error_message: errorMessage,
-            },
+            { status: "success", order_id: completion.order.id, cart_id: cartId },
+            { status: 200 }
+          )
+        } else {
+          console.warn(
+            "⚠️ [WEBHOOK-MP] Respuesta inesperada al completar:",
+            completion?.type
+          )
+          return NextResponse.json(
+            { status: "unexpected_response", cart_id: cartId },
             { status: 200 }
           )
         }
-      } catch (outerError: any) {
-        // Catch-all: Cualquier error inesperado también retorna 200 OK
-        console.error("💥 [WEBHOOK-MP] Error inesperado en bloque principal (retornando 200 OK):", {
-          message: outerError.message,
-          stack: outerError.stack,
+      } catch (error: any) {
+        // Siempre retornar 200 OK para evitar loops de reintentos de MercadoPago
+        console.error("❌ [WEBHOOK-MP] Error al completar carrito:", {
+          message: error.message,
+          status: error.status || error.statusCode,
           cart_id: cartId,
         })
-        // SIEMPRE retornar 200 para evitar loops de reintentos de MercadoPago
+        
         return NextResponse.json(
-          { error: "Unexpected error (acknowledged)", cart_id: cartId },
+          {
+            error: "Error during completion (acknowledged)",
+            cart_id: cartId,
+            error_message: error.message,
+          },
           { status: 200 }
         )
       }

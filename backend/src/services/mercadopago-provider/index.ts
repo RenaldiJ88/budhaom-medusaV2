@@ -94,11 +94,9 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           payer: { email: input?.email || "guest@test.com" },
           external_reference: cartId,
           notification_url: webhookUrl,
-          // CONFIGURACIÓN SOLO RETIRO / FLEXIBLE
           shipments: {
             mode: "not_specified",
             local_pickup: true,
-            free_shipping: true,
           },
           back_urls: {
             success: `${statusBaseUrl}?status=approved`,
@@ -135,18 +133,16 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     return this.initiatePayment(input);
   }
 
-  // --- MÉTODOS BLINDADOS (Aquí estaba el crash) ---
-
-  async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> {
-    // NO intentamos leer el carrito. Asumimos que si llegamos aquí, MP autorizó.
-    return { status: PaymentSessionStatus.AUTHORIZED, data: input?.session_data || {} };
+  async authorizePayment(_input: unknown): Promise<{ status: PaymentSessionStatus; data: SessionData }> {
+    // DO NOT read input.cart.payment_collection - cart may be detached/archived in Medusa v2
+    // Simply return AUTHORIZED - the Webhook handles actual order creation
+    return { status: PaymentSessionStatus.AUTHORIZED, data: {} }
   }
 
-  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> {
-    // AQUÍ OCURRÍA EL ERROR "reading payment_collection".
-    // Eliminamos la lectura del carrito. Siempre devolvemos AUTHORIZED.
-    // La verificación real la hace el Webhook al crear la orden.
-    return { status: PaymentSessionStatus.AUTHORIZED }; 
+  async getPaymentStatus(_input: unknown): Promise<{ status: PaymentSessionStatus }> {
+    // DO NOT read input.cart.payment_collection - prevents "Cannot read properties of undefined" crash
+    // Always return AUTHORIZED - the Webhook handles actual order creation
+    return { status: PaymentSessionStatus.AUTHORIZED }
   }
 
   async cancelPayment(input: any): Promise<SessionData> { return input?.session_data || {}; }
