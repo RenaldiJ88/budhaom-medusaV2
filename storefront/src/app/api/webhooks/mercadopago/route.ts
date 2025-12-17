@@ -106,13 +106,14 @@ export async function POST(req: NextRequest) {
       try {
         const completion = await sdk.store.cart.complete(cartId)
 
-        if (completion?.type === "order" && completion?.order) {
+        if (completion?.type === "order" && (completion as any)?.order) {
+          const order = (completion as any).order
           console.log(
             "🎉 [WEBHOOK-MP] Orden creada exitosamente:",
-            completion.order.id
+            order.id
           )
           return NextResponse.json(
-            { status: "success", order_id: completion.order.id, cart_id: cartId },
+            { status: "success", order_id: order.id, cart_id: cartId },
             { status: 200 }
           )
         } else {

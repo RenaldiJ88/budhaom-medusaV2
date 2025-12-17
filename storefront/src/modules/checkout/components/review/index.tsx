@@ -18,6 +18,13 @@ const Review = ({ cart }: { cart: any }) => {
     cart.shipping_methods.length > 0 &&
     (cart.payment_collection || paidByGiftcard)
 
+  // Obtener la sesión de MercadoPago
+  const mpSession = cart?.payment_collection?.payment_sessions?.find(
+    (s: any) => s.provider_id?.includes("mercadopago")
+  ) || cart?.payment_session
+
+  const notReady = !mpSession?.data?.init_point && !mpSession?.data?.sandbox_init_point
+
   return (
     <div className="bg-white">
       <div className="flex flex-row items-center justify-between mb-6">
@@ -45,7 +52,12 @@ const Review = ({ cart }: { cart: any }) => {
               </Text>
             </div>
           </div>
-          <PaymentButton cart={cart} data-testid="submit-order-button" />
+          <PaymentButton 
+            cart={cart} 
+            notReady={notReady}
+            session={mpSession}
+            data-testid="submit-order-button" 
+          />
         </>
       )}
     </div>

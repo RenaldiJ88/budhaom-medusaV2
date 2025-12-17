@@ -74,10 +74,10 @@ const MercadoPagoListener = ({ cart }: { cart: any }) => {
       console.log("📦 [LISTENER] Llamando a SDK para completar carrito:", cart.id)
       const cartRes = await sdk.store.cart.complete(cart.id, {})
 
-      console.log("📋 [LISTENER] Respuesta del SDK:", { type: cartRes.type, hasOrder: !!cartRes.order })
+      console.log("📋 [LISTENER] Respuesta del SDK:", { type: cartRes.type, hasOrder: !!(cartRes as any).order })
 
-      if (cartRes?.type === "order" && cartRes?.order) {
-        const order = cartRes.order
+      if (cartRes?.type === "order" && (cartRes as any)?.order) {
+        const order = (cartRes as any).order
         const countryCode = order.shipping_address?.country_code?.toLowerCase() || 
                            order.billing_address?.country_code?.toLowerCase() || 
                            cart.region?.countries?.[0]?.iso_2?.toLowerCase() || 

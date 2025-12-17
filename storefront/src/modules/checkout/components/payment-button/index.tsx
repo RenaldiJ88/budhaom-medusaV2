@@ -106,3 +106,5 @@ export const MercadoPagoPaymentButton = ({
     </div>
   )
 }
+
+export default MercadoPagoPaymentButton
