@@ -8,7 +8,7 @@ import {
   WebhookActionResult 
 } from "@medusajs/framework/types";
 import { MercadoPagoConfig, Preference } from 'mercadopago';
-// 🔥 IMPORTANTE: Importamos las llaves para acceder a la Base de Datos
+// Importamos las llaves
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils";
 
 type Options = {
@@ -29,7 +29,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
 
   constructor(container: any, options: Options) {
     super(container, options); 
-    this.container_ = container; // Guardamos el container para poder consultar la DB
+    this.container_ = container; 
     this.options_ = options;
     this.logger_ = container.logger;
     this.mercadoPagoConfig = new MercadoPagoConfig({
@@ -40,22 +40,24 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
     this.logger_.info(`🔥 [MP-INIT] Iniciando...`);
     
-    // 1. OBTENER ID DE SESIÓN (payses_)
-    // Tu log confirmó que viene en input.data.session_id
+    // 1. OBTENER ID DE SESIÓN
     const sessionId = input.data?.session_id || input.id;
     
-    let resource_id = sessionId; // Por defecto usamos la sesión
+    let resource_id = sessionId; 
     let cartIdFound: string | undefined = undefined;
 
-    // 2. CONSULTAR A LA BASE DE DATOS (REMOTE QUERY)
-    // Usamos el ID de sesión para buscar el cart_id real
+    // 2. CONSULTAR A LA BASE DE DATOS (FIXED: Acceso directo al container)
     if (sessionId && sessionId.startsWith("payses_")) {
         this.logger_.info(`🕵️‍♂️ [MP-DB] Consultando DB para sesión: ${sessionId}`);
         
         try {
-            const remoteQuery = this.container_.resolve(ContainerRegistrationKeys.REMOTE_QUERY);
+            // 🔥 CORRECCIÓN AQUÍ: No usamos .resolve(), accedemos directo a la propiedad
+            const remoteQuery = this.container_[ContainerRegistrationKeys.REMOTE_QUERY];
             
-            // Query: "Busca en payment_session, trae el payment_collection, y de ahí el cart_id"
+            if (!remoteQuery) {
+                throw new Error("Remote Query no está disponible en el container");
+            }
+
             const query = {
                 entryPoint: "payment_session",
                 fields: ["payment_collection.cart_id"],
@@ -63,17 +65,15 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             };
 
             const result = await remoteQuery(query);
-            
-            // El resultado suele ser un array
             const fetchedCartId = result[0]?.payment_collection?.cart_id;
 
             if (fetchedCartId) {
                 cartIdFound = fetchedCartId;
-                resource_id = fetchedCartId; // ¡REEMPLAZAMOS EL ID!
+                resource_id = fetchedCartId;
                 this.logger_.info(`🎯 [MP-DB] ¡EUREKA! Carrito encontrado: ${resource_id}`);
             } else {
                 this.logger_.warn(`⚠️ [MP-DB] La consulta funcionó pero no trajo cart_id.`);
-                // Intento de fallback: buscar si el contexto tiene cart_id
+                // Fallback contexto
                 if (input.context?.cart_id) {
                     resource_id = input.context.cart_id;
                     this.logger_.info(`📦 [MP-CTX] Usando cart_id del contexto: ${resource_id}`);
@@ -84,7 +84,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             this.logger_.error(`❌ [MP-DB-ERROR] Falló la consulta a DB: ${error}`);
         }
     } else {
-        // Si por milagro ya vino un cart_id en el input
+        // Si ya vino un cart_id en el input
         if (input.resource_id?.startsWith("cart_")) resource_id = input.resource_id;
         if (input.context?.cart_id) resource_id = input.context.cart_id;
     }
@@ -128,7 +128,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           },
         ],
         payer: { email: email },
-        external_reference: resource_id, // AQUÍ VA EL CART_ID (O PAYSES SI FALLÓ TODO)
+        external_reference: resource_id,
         notification_url: webhookUrl,
         back_urls: { success: successUrl, failure: failureUrl, pending: pendingUrl },
         auto_return: "approved",
