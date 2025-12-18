@@ -8,8 +8,7 @@ import {
   WebhookActionResult 
 } from "@medusajs/framework/types";
 import { MercadoPagoConfig, Preference } from 'mercadopago';
-
-// 🔥 IMPORTANTE: Necesitamos esto para consultar la DB
+// Importamos el ContainerRegistrationKeys para poder acceder a la DB si hace falta
 import { ContainerRegistrationKeys } from "@medusajs/framework/utils";
 
 type Options = {
@@ -26,11 +25,11 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   protected options_: Options;
   protected logger_: Logger;
   protected mercadoPagoConfig: MercadoPagoConfig;
-  protected container_: any; // Guardamos el container para usarlo después
+  protected container_: any;
 
   constructor(container: any, options: Options) {
     super(container, options); 
-    this.container_ = container; // <--- Guardamos referencia al sistema
+    this.container_ = container;
     this.options_ = options;
     this.logger_ = container.logger;
     this.mercadoPagoConfig = new MercadoPagoConfig({
@@ -39,79 +38,85 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    this.logger_.info(`🔥 [MP-INIT] Procesando solicitud (Modo Experto)...`);
+    this.logger_.info(`🔥 [MP-INIT] Iniciando...`);
 
-    // 1. INTENTAR OBTENER ID DEL INPUT (Método Rápido)
-    let resource_id = input.resource_id; // Generalmente es payses_...
+    // 🚨 LOG DE LA VERDAD: ESTO NOS DIRÁ QUÉ TIENE EL INPUT REALMENTE
+    // Busca esto en tu consola de Railway cuando falles
+    console.log("📦 [MP-FULL-DUMP]:", JSON.stringify(input, null, 2));
 
-    // 2. ESTRATEGIA "STRIPE": CONSULTAR LA BASE DE DATOS
-    // Si tenemos una sesión (payses_), buscamos su carrito asociado en la DB.
-    
-    let cartIdReal: string | undefined = undefined;
+    // --- ESTRATEGIA DE BÚSQUEDA AGRESIVA ---
+    let resource_id: string | undefined = undefined;
 
-    // Buscamos si ya vino en el input (poco probable según tus logs)
+    // Lista ampliada de candidatos (Orden de prioridad)
     const candidates = [
-        input.resource_id, input.context?.cart_id, input.cart?.id, input.data?.cart_id
+      input.resource_id,              // A veces viene directo
+      input.context?.cart_id,         // Estándar
+      input.context?.id,              // 🔥 NUEVO: A veces el contexto ES el carrito
+      input.cart?.id,                 // Objeto cart
+      input.data?.cart_id,            // Data previa
+      input.payment_session?.cart_id 
     ];
-    for (const c of candidates) {
-        if (typeof c === 'string' && c.startsWith("cart_")) {
-            cartIdReal = c;
-            break;
-        }
+
+    // 1. Buscamos cualquier cosa que parezca un cart_id ("cart_...")
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.startsWith("cart_")) {
+        resource_id = candidate;
+        this.logger_.info(`🎯 [MP-DEBUG] Cart ID encontrado en lista: ${resource_id}`);
+        break; 
+      }
     }
 
-    // SI NO LO ENCONTRAMOS, USAMOS LA ARTILLERÍA PESADA (REMOTE QUERY)
-    if (!cartIdReal && resource_id && resource_id.startsWith("payses_")) {
-        this.logger_.info(`🕵️‍♂️ [MP-DB] Consultando DB para sesión: ${resource_id}`);
+    // 2. Si no encontramos "cart_", probamos con la DB (Remote Query) usando lo que tengamos
+    if (!resource_id) {
+        // ¿Tenemos algún ID de sesión (payses_...)?
+        const sessionId = input.resource_id || input.id;
         
-        try {
-            // Invocamos al Remote Query (El motor de búsqueda de Medusa v2)
-            const remoteQuery = this.container_.resolve(ContainerRegistrationKeys.REMOTE_QUERY);
-            
-            // Query: "Dame el payment_collection de esta sesión, y de ahí dame el cart_id"
-            const query = {
-                entryPoint: "payment_session",
-                fields: ["payment_collection.cart_id"],
-                filters: { id: resource_id }
-            };
+        if (sessionId && typeof sessionId === 'string' && sessionId.startsWith("payses_")) {
+            this.logger_.info(`🕵️‍♂️ [MP-DB] Buscando carrito para sesión: ${sessionId}`);
+            try {
+                const remoteQuery = this.container_.resolve(ContainerRegistrationKeys.REMOTE_QUERY);
+                const query = {
+                    entryPoint: "payment_session",
+                    fields: ["payment_collection.cart_id"],
+                    filters: { id: sessionId }
+                };
+                const result = await remoteQuery(query);
+                const fetchedCartId = result[0]?.payment_collection?.cart_id;
 
-            const result = await remoteQuery(query);
-            
-            // El resultado es un array. Sacamos el cart_id.
-            const fetchedCartId = result[0]?.payment_collection?.cart_id;
-
-            if (fetchedCartId) {
-                cartIdReal = fetchedCartId;
-                this.logger_.info(`🎯 [MP-DB] ¡EUREKA! Carrito encontrado en DB: ${cartIdReal}`);
-            } else {
-                this.logger_.warn(`⚠️ [MP-DB] La DB no devolvió cart_id para esta sesión.`);
+                if (fetchedCartId) {
+                    resource_id = fetchedCartId;
+                    this.logger_.info(`🎯 [MP-DB] ¡EUREKA! Carrito recuperado de DB: ${resource_id}`);
+                }
+            } catch (e) {
+                this.logger_.error(`❌ [MP-DB] Error en consulta: ${e}`);
             }
-
-        } catch (error) {
-            this.logger_.error(`❌ [MP-DB-ERROR] Falló la consulta a DB: ${error}`);
         }
     }
 
-    // Si falló todo, usamos el resource_id original (payses_) y rezamos
-    const finalId = cartIdReal || resource_id || `fallback_${Date.now()}`;
-    
-    this.logger_.info(`🛒 [MP-FINAL] ID Vinculado para Webhook: ${finalId}`);
+    // 3. Fallback Final (Si llegamos acá, estamos creando una orden fantasma)
+    if (!resource_id) {
+        resource_id = `fallback_${Date.now()}`;
+        this.logger_.warn(`⚠️ [MP-WARN] IMPOSIBLE ENCONTRAR CART ID. Usando Fallback: ${resource_id}`);
+    }
 
-    // --- CONFIGURACIÓN DE URLS Y PREFERENCIA ---
-    // (Esto ya funcionaba bien, lo mantenemos igual)
+    // --- CONFIGURACIÓN DE URLS ---
     let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
     if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
-    const baseUrlStr = `${rawStoreUrl}/checkout`;
+    
+    // URL Frontend
+    const successUrl = `${rawStoreUrl}/checkout?step=payment&payment_status=success`;
+    const failureUrl = `${rawStoreUrl}/checkout?step=payment&payment_status=failure`;
+    const pendingUrl = `${rawStoreUrl}/checkout?step=payment&payment_status=pending`;
 
-    const successUrl = `${baseUrlStr}?step=payment&payment_status=success`;
-    const failureUrl = `${baseUrlStr}?step=payment&payment_status=failure`;
-    const pendingUrl = `${baseUrlStr}?step=payment&payment_status=pending`;
-
+    // URL Webhook (Backend)
     let backendDomain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000";
     if (!backendDomain.startsWith("http")) backendDomain = `https://${backendDomain}`;
     const cleanBackendUrl = backendDomain.endsWith("/") ? backendDomain.slice(0, -1) : backendDomain;
     const webhookUrl = `${cleanBackendUrl}/hooks/mp`;
 
+    this.logger_.info(`🌐 [MP-DEBUG] Return: ${successUrl}`);
+
+    // --- PREFERENCIA MERCADO PAGO ---
     let amount = input.amount || input.context?.amount;
     if (!amount) amount = 100;
     const email = input.email || input.context?.email || "guest@budhaom.com";
@@ -120,7 +125,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       body: {
         items: [
           {
-            id: finalId,
+            id: resource_id,
             title: "Compra en BUDHA.Om",
             quantity: 1,
             unit_price: Number(amount),
@@ -128,36 +133,35 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           },
         ],
         payer: { email: email },
-        external_reference: finalId, // <--- AHORA SÍ SERÁ EL CART_ID
+        external_reference: resource_id, // CLAVE: Esto vincula la orden
         notification_url: webhookUrl,
-        back_urls: {
-          success: successUrl,
-          failure: failureUrl,
-          pending: pendingUrl,
-        },
+        back_urls: { success: successUrl, failure: failureUrl, pending: pendingUrl },
         auto_return: "approved",
-        metadata: {
-          cart_id: finalId
-        }
+        metadata: { cart_id: resource_id }
       },
     };
 
-    const preference = new Preference(this.mercadoPagoConfig);
-    const response = await preference.create(preferenceData);
+    try {
+        const preference = new Preference(this.mercadoPagoConfig);
+        const response = await preference.create(preferenceData);
+        
+        if (!response.id) throw new Error("Mercado Pago no devolvió ID");
 
-    if (!response.id) throw new Error("Mercado Pago no devolvió ID");
-
-    return {
-      id: response.id!,
-      data: {
-        id: response.id!,
-        init_point: response.init_point!, 
-        resource_id: finalId 
-      },
-    };
+        return {
+            id: response.id!,
+            data: {
+                id: response.id!,
+                init_point: response.init_point!, 
+                resource_id: resource_id 
+            },
+        };
+    } catch (error: any) {
+        this.logger_.error(`🔥 [MP-ERROR]: ${error.message}`);
+        throw error;
+    }
   }
 
-  // ... Resto de métodos (authorizePayment, updatePayment, etc) IGUAL QUE ANTES ...
+  // Métodos Boilerplate
   async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { return this.initiatePayment(input); }
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} }; }
   async cancelPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
