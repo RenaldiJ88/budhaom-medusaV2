@@ -51,31 +51,36 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         this.logger_.info(`🛒 [MP-DEBUG] ID Confirmado: ${resource_id}`);
       }
 
-      // 2. CONSTRUCCIÓN DE URL (CORREGIDO: Concatenación manual)
-      // Tomamos la variable de Railway tal cual está (con /ar)
+      // 2. CONSTRUCCIÓN DE URL FRONTEND (Retorno al cliente)
       let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
-      
-      // Quitamos barra final si existe para que la unión quede limpia
+      // Quitamos barra final si existe
       if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
       
-      // 🔥 AQUÍ ESTABA EL ERROR: Ahora pegamos el /checkout manualmente
-      // Esto garantiza que quede: https://.../ar/checkout
+      // Concatenación manual para asegurar estructura (ej: /ar/checkout)
       const baseUrlStr = `${rawStoreUrl}/checkout`;
 
-      // Construimos las URLs finales agregando los parámetros
       const successUrl = `${baseUrlStr}?step=payment&payment_status=success`;
       const failureUrl = `${baseUrlStr}?step=payment&payment_status=failure`;
       const pendingUrl = `${baseUrlStr}?step=payment&payment_status=pending`;
 
-      this.logger_.info(`🌐 [MP-DEBUG] Return URL FINAL: ${successUrl}`);
+      // 3. CONSTRUCCIÓN DE URL WEBHOOK (Backend "Antena")
+      // Necesitamos el dominio público de Railway del BACKEND
+      const backendUrl = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000";
+      const cleanBackendUrl = backendUrl.endsWith("/") ? backendUrl.slice(0, -1) : backendUrl;
+      
+      // Esta ruta debe coincidir con el archivo que creamos: api/hooks/mp/route.ts
+      const webhookUrl = `${cleanBackendUrl}/hooks/mp`;
 
-      // 3. DATOS MONETARIOS
+      this.logger_.info(`🌐 [MP-DEBUG] Return URL: ${successUrl}`);
+      this.logger_.info(`📡 [MP-DEBUG] Webhook URL: ${webhookUrl}`);
+
+      // 4. DATOS MONETARIOS
       let amount = input.amount || input.context?.amount;
       if (!amount) amount = 100;
 
       const email = input.email || input.context?.email || "guest@budhaom.com";
 
-      // 4. PREFERENCIA
+      // 5. PREFERENCIA
       const preferenceData = {
         body: {
           items: [
@@ -88,8 +93,11 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             },
           ],
           payer: { email: email },
-          external_reference: resource_id,
+          external_reference: resource_id, // CLAVE: Vincula el pago con el carrito
           
+          // 🔥 AQUÍ CONECTAMOS EL WEBHOOK
+          notification_url: webhookUrl,
+
           back_urls: {
             success: successUrl,
             failure: failureUrl,
@@ -100,6 +108,9 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             mode: "not_specified",
             local_pickup: true, 
           },
+          metadata: {
+            cart_id: resource_id
+          }
         },
       };
 
@@ -129,8 +140,10 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
 
   // Boilerplate
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> {
+    // Retornamos AUTHORIZED para permitir que el frontend o webhook completen la orden
     return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} };
   }
+  
   async cancelPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async capturePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async deletePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
