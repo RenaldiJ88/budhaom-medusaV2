@@ -34,58 +34,60 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    this.logger_.info(`🔥 [MP-INIT] Procesando solicitud de pago...`);
+    this.logger_.info(`🔥 [MP-INIT] Procesando solicitud...`);
 
     try {
-      // 1. DETECCIÓN DE ID
-      let resource_id = 
-        input.resource_id || 
-        input.context?.resource_id || 
-        input.data?.session_id || 
-        input.id;
+      // --- 1. DETECCIÓN INTELIGENTE DE ID DE CARRITO (FIX CRÍTICO) ---
+      // Buscamos explícitamente un ID que empiece con "cart_"
+      let resource_id = input.resource_id;
 
-      if (!resource_id) {
-        this.logger_.warn(`⚠️ [MP-WARN] ID no encontrado. Input: ${JSON.stringify(input)}`);
-        resource_id = `mp_fallback_${Date.now()}`;
-      } else {
-        this.logger_.info(`🛒 [MP-DEBUG] ID Confirmado: ${resource_id}`);
+      // Si el resource_id actual NO es un carrito (es una sesión o undefined), buscamos más profundo
+      if (!resource_id || !resource_id.startsWith("cart_")) {
+         // Intentamos sacar el cart_id del contexto o de la sesión
+         resource_id = 
+            input.context?.cart_id || 
+            input.cart?.id ||
+            input.context?.resource_id; // A veces el resource_id sí es el carrito
       }
 
-      // 2. CONSTRUCCIÓN DE URL FRONTEND
+      // Si seguimos sin encontrar un "cart_", usamos el ID que tengamos pero avisamos
+      if (!resource_id) {
+         // Último recurso: Usamos el ID de sesión, pero esto podría fallar al crear la orden
+         resource_id = input.id || input.data?.session_id; 
+         this.logger_.warn(`⚠️ [MP-WARN] Usando ID de Sesión (${resource_id}) porque no se halló Cart ID.`);
+      } else {
+         this.logger_.info(`🛒 [MP-DEBUG] Cart ID Correcto detectado: ${resource_id}`);
+      }
+
+      // --- 2. URL FRONTEND ---
       let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
       if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
-      
       const baseUrlStr = `${rawStoreUrl}/checkout`;
 
       const successUrl = `${baseUrlStr}?step=payment&payment_status=success`;
       const failureUrl = `${baseUrlStr}?step=payment&payment_status=failure`;
       const pendingUrl = `${baseUrlStr}?step=payment&payment_status=pending`;
 
-      // 3. CONSTRUCCIÓN DE URL WEBHOOK (CORREGIDO: Forzar HTTPS)
+      // --- 3. URL WEBHOOK (HTTPS FIX) ---
       let backendDomain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000";
+      if (!backendDomain.startsWith("http")) backendDomain = `https://${backendDomain}`; // Force HTTPS
       
-      // 🔥 FIX CRÍTICO: Railway devuelve el dominio "pelado", MP necesita https://
-      if (!backendDomain.startsWith("http")) {
-        backendDomain = `https://${backendDomain}`;
-      }
-
       const cleanBackendUrl = backendDomain.endsWith("/") ? backendDomain.slice(0, -1) : backendDomain;
       const webhookUrl = `${cleanBackendUrl}/hooks/mp`;
 
       this.logger_.info(`🌐 [MP-DEBUG] Return URL: ${successUrl}`);
-      this.logger_.info(`📡 [MP-DEBUG] Webhook URL: ${webhookUrl}`); // ¡Ahora debe salir con https!
+      this.logger_.info(`📡 [MP-DEBUG] Webhook URL: ${webhookUrl}`);
 
-      // 4. DATOS MONETARIOS
+      // --- 4. PREFERENCIA ---
       let amount = input.amount || input.context?.amount;
       if (!amount) amount = 100;
       const email = input.email || input.context?.email || "guest@budhaom.com";
 
-      // 5. PREFERENCIA
       const preferenceData = {
         body: {
           items: [
             {
-              id: resource_id,
+              id: resource_id, // Aquí va el Cart ID
               title: "Compra en BUDHA.Om",
               quantity: 1,
               unit_price: Number(amount),
@@ -93,8 +95,8 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             },
           ],
           payer: { email: email },
-          external_reference: resource_id,
-          notification_url: webhookUrl, // URL con https:// obligatorio
+          external_reference: resource_id, // CLAVE: Esto es lo que el Webhook usará para cerrar la orden
+          notification_url: webhookUrl,
           back_urls: {
             success: successUrl,
             failure: failureUrl,
@@ -106,7 +108,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             local_pickup: true, 
           },
           metadata: {
-            cart_id: resource_id
+            cart_id: resource_id // Respaldo extra
           }
         },
       };
