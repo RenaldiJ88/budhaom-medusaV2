@@ -34,49 +34,55 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    this.logger_.info(`🔥 [MP-INIT] Iniciando. Analizando Input...`);
-    
-    // 🕵️ LOG CHIVATO: Esto nos mostrará en Railway qué diablos llega
-    console.log("📦 [MP-DEBUG-DUMP]:", JSON.stringify(input, null, 2));
+    this.logger_.info(`🔥 [MP-INIT] Procesando solicitud de pago...`);
 
     try {
-      // 1. ESTRATEGIA DE BÚSQUEDA DE ID (¡Ahora buscamos en TODOS lados!)
+      // 1. DETECCIÓN DE ID (Basado en tu LOG real)
       let resource_id = 
-        input.resource_id ||                 // Estándar Medusa v2
-        input.context?.resource_id ||        // Contexto v2
-        input.id ||                          // A veces el input es el objeto
-        input.data?.resource_id ||           // Si viene dentro de data
-        input.payment_session?.cart_id ||    // Si viene la sesión completa
-        input.cart?.id;                      // Si viene el carrito
+        input.resource_id || 
+        input.context?.resource_id || 
+        input.data?.session_id || // <--- ESTO ES LO QUE FALTABA (payses_...)
+        input.id;
 
-      // Si aún así es null, usamos un fallback pero AVISAMOS
       if (!resource_id) {
-        this.logger_.warn(`⚠️ [MP-WARN] ID REAL NO ENCONTRADO. Revisa el log [MP-DEBUG-DUMP] arriba.`);
-        // Fallback para que NO explote y puedas probar el flujo visual
+        // Fallback de última instancia
+        this.logger_.warn(`⚠️ [MP-WARN] ID no encontrado. Input: ${JSON.stringify(input)}`);
         resource_id = `mp_fallback_${Date.now()}`;
       } else {
-        this.logger_.info(`🛒 [MP-DEBUG] ID DETECTADO EXITOSAMENTE: ${resource_id}`);
+        this.logger_.info(`🛒 [MP-DEBUG] ID Confirmado: ${resource_id}`);
       }
 
-      // 2. CONFIGURACIÓN DE URL (Sin forzar /ar)
-      // Prioridad: Env Var > Options > Default
-      let storeUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
+      // 2. CONSTRUCCIÓN DE URL SEGURA (Para evitar el 404)
+      // Tomamos la variable de Railway
+      const rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
       
-      // Limpieza de URL
-      if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
+      // Usamos la API URL nativa para evitar errores de // dobles
+      // Si rawStoreUrl ya tiene /ar, lo respetamos.
+      const baseUrl = new URL(rawStoreUrl); 
       
-      // LOG DE URL para confirmar a dónde volverá
-      this.logger_.info(`🌐 [MP-DEBUG] Base URL para retorno: ${storeUrl}`);
+      // Construimos las URLs de retorno
+      // Nota: encodeURIComponent no es necesario para la base, pero Next.js debe manejar los params
+      const successUrl = new URL("/checkout", baseUrl);
+      successUrl.searchParams.set("step", "payment");
+      successUrl.searchParams.set("payment_status", "success");
+
+      const failureUrl = new URL("/checkout", baseUrl);
+      failureUrl.searchParams.set("step", "payment");
+      failureUrl.searchParams.set("payment_status", "failure");
+      
+      const pendingUrl = new URL("/checkout", baseUrl);
+      pendingUrl.searchParams.set("step", "payment");
+      pendingUrl.searchParams.set("payment_status", "pending");
+
+      this.logger_.info(`🌐 [MP-DEBUG] Return URL: ${successUrl.toString()}`);
 
       // 3. DATOS MONETARIOS
       let amount = input.amount || input.context?.amount;
-      if (!amount) {
-         amount = 100; // Monto dummy de seguridad
-      }
+      if (!amount) amount = 100; // Seguridad
 
       const email = input.email || input.context?.email || "guest@budhaom.com";
 
-      // 4. CREAR PREFERENCIA
+      // 4. PREFERENCIA
       const preferenceData = {
         body: {
           items: [
@@ -89,12 +95,12 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             },
           ],
           payer: { email: email },
-          external_reference: resource_id, // CLAVE para que el Webhook funcione
+          external_reference: resource_id,
           
           back_urls: {
-            success: `${storeUrl}/checkout?step=payment&payment_status=success`,
-            failure: `${storeUrl}/checkout?step=payment&payment_status=failure`,
-            pending: `${storeUrl}/checkout?step=payment&payment_status=pending`,
+            success: successUrl.toString(),
+            failure: failureUrl.toString(),
+            pending: pendingUrl.toString(),
           },
           auto_return: "approved",
           shipments: {
@@ -109,8 +115,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
 
       if (!response.id) throw new Error("Mercado Pago no devolvió ID");
 
-      this.logger_.info(`✅ [MP-SUCCESS] Preferencia creada: ${response.id}`);
-
       return {
         id: response.id!,
         data: {
@@ -121,7 +125,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       };
 
     } catch (error: any) {
-      this.logger_.error(`🔥 [MP-CRASH]: ${error.message}`);
+      this.logger_.error(`🔥 [MP-ERROR]: ${error.message}`);
       throw error;
     }
   }
@@ -130,7 +134,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     return this.initiatePayment(input);
   }
 
-  // Métodos Boilerplate
+  // Boilerplate
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> {
     return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} };
   }
