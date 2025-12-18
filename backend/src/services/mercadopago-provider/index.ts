@@ -34,39 +34,44 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    this.logger_.info(`🔥 [MP-INIT] Iniciando proceso de pago...`);
+    this.logger_.info(`🔥 [MP-INIT] Iniciando. Analizando Input...`);
+    
+    // 🕵️ LOG CHIVATO: Esto nos mostrará en Railway qué diablos llega
+    console.log("📦 [MP-DEBUG-DUMP]:", JSON.stringify(input, null, 2));
 
     try {
-      // 1. ESTRATEGIA DE BÚSQUEDA DE ID (Más agresiva para no fallar)
+      // 1. ESTRATEGIA DE BÚSQUEDA DE ID (¡Ahora buscamos en TODOS lados!)
       let resource_id = 
-        input.context?.resource_id || 
-        input.resource_id || 
-        input.id || 
-        input.data?.resource_id;
+        input.resource_id ||                 // Estándar Medusa v2
+        input.context?.resource_id ||        // Contexto v2
+        input.id ||                          // A veces el input es el objeto
+        input.data?.resource_id ||           // Si viene dentro de data
+        input.payment_session?.cart_id ||    // Si viene la sesión completa
+        input.cart?.id;                      // Si viene el carrito
 
-      // Si aún así es null, usamos un fallback para NO ROMPER el checkout
+      // Si aún así es null, usamos un fallback pero AVISAMOS
       if (!resource_id) {
-        this.logger_.warn(`⚠️ [MP-WARN] ID no encontrado en input. Usando Fallback.`);
-        // Generamos un ID temporal seguro
+        this.logger_.warn(`⚠️ [MP-WARN] ID REAL NO ENCONTRADO. Revisa el log [MP-DEBUG-DUMP] arriba.`);
+        // Fallback para que NO explote y puedas probar el flujo visual
         resource_id = `mp_fallback_${Date.now()}`;
       } else {
-        this.logger_.info(`🛒 [MP-DEBUG] ID detectado correctamente: ${resource_id}`);
+        this.logger_.info(`🛒 [MP-DEBUG] ID DETECTADO EXITOSAMENTE: ${resource_id}`);
       }
 
-      // 2. CONFIGURACIÓN DE URL
-      // Usamos estrictamente lo que diga la variable de entorno STORE_URL sin inventar regiones
+      // 2. CONFIGURACIÓN DE URL (Sin forzar /ar)
+      // Prioridad: Env Var > Options > Default
       let storeUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
       
-      // Solo quitamos la barra final si existe para evitar dobles barras //
+      // Limpieza de URL
       if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
+      
+      // LOG DE URL para confirmar a dónde volverá
+      this.logger_.info(`🌐 [MP-DEBUG] Base URL para retorno: ${storeUrl}`);
 
-      const redirectUrl = storeUrl; // Sin forzar /ar
-
-      // 3. DATOS MONETARIOS (Con fallback para no dar error 500)
+      // 3. DATOS MONETARIOS
       let amount = input.amount || input.context?.amount;
       if (!amount) {
-         this.logger_.warn(`⚠️ [MP-WARN] Monto no detectado. Usando monto de prueba 100.`);
-         amount = 100; // Monto dummy para evitar crash de MP
+         amount = 100; // Monto dummy de seguridad
       }
 
       const email = input.email || input.context?.email || "guest@budhaom.com";
@@ -84,16 +89,14 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             },
           ],
           payer: { email: email },
-          external_reference: resource_id,
+          external_reference: resource_id, // CLAVE para que el Webhook funcione
           
           back_urls: {
-            success: `${redirectUrl}/checkout?step=payment&payment_status=success`,
-            failure: `${redirectUrl}/checkout?step=payment&payment_status=failure`,
-            pending: `${redirectUrl}/checkout?step=payment&payment_status=pending`,
+            success: `${storeUrl}/checkout?step=payment&payment_status=success`,
+            failure: `${storeUrl}/checkout?step=payment&payment_status=failure`,
+            pending: `${storeUrl}/checkout?step=payment&payment_status=pending`,
           },
           auto_return: "approved",
-
-          // Importante para Retiro en Local
           shipments: {
             mode: "not_specified",
             local_pickup: true, 
@@ -106,6 +109,8 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
 
       if (!response.id) throw new Error("Mercado Pago no devolvió ID");
 
+      this.logger_.info(`✅ [MP-SUCCESS] Preferencia creada: ${response.id}`);
+
       return {
         id: response.id!,
         data: {
@@ -116,23 +121,19 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       };
 
     } catch (error: any) {
-      // Capturamos el error pero NO lanzamos 500 si podemos evitarlo
-      this.logger_.error(`🔥 [MP-CRASH-PREVENTION]: ${error.message}`);
-      throw error; // Aquí sí lanzamos porque sin ID de MP no podemos redirigir
+      this.logger_.error(`🔥 [MP-CRASH]: ${error.message}`);
+      throw error;
     }
   }
 
   async updatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    // Reutilizar lógica para updates
     return this.initiatePayment(input);
   }
 
-  // --- MÉTODOS OBLIGATORIOS (Safe Mode) ---
-  
+  // Métodos Boilerplate
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> {
     return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} };
   }
-
   async cancelPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async capturePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async deletePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
