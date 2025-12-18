@@ -36,45 +36,50 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
     this.logger_.info(`🔥 [MP-INIT] Procesando solicitud...`);
 
-    // --- 1. DETECCIÓN DE ID "SHERLOCK HOLMES" ---
-    // El objetivo es encontrar CUALQUIER string que empiece con "cart_"
-    // Medusa v2 es inconsistente en dónde pone el ID, así que buscamos en todos lados.
-    
+    // --- DIAGNÓSTICO CURSOR: ISSUE 1 (BÚSQUEDA PROFUNDA DE ID) ---
+    // Cursor indica que input.resource_id suele ser la sesión (payses_) y no el carrito.
+    // Buscamos activamente el cart_id en todas las propiedades posibles.
+
     let resource_id: string | undefined = undefined;
 
     const candidates = [
-      input.resource_id,
-      input.context?.resource_id,
-      input.context?.cart_id,
-      input.cart?.id,
-      input.payment_session?.cart_id,
-      input.data?.cart_id
+      input.resource_id,              // A veces es el carrito
+      input.context?.resource_id,     // Contexto medusa v2
+      input.context?.cart_id,         // Contexto explícito
+      input.cart?.id,                 // Objeto cart directo
+      input.payment_session?.cart_id, // Objeto sesión
+      input.data?.cart_id,            // Data persistida
+      input.data?.resource_id
     ];
 
-    // Iteramos: El primero que sea un string y empiece con "cart_" GANA.
+    // Iteramos: Buscamos cualquier cosa que empiece con "cart_"
     for (const candidate of candidates) {
       if (typeof candidate === 'string' && candidate.startsWith("cart_")) {
         resource_id = candidate;
+        this.logger_.info(`🛒 [MP-DEBUG] Cart ID encontrado en input: ${resource_id}`);
         break; 
       }
     }
 
-    // Si después de buscar, no hay cart_, usamos el fallback (payses_ o lo que haya)
+    // Si no encontramos "cart_", usamos el fallback (payses_)
     if (!resource_id) {
        const fallback = input.resource_id || input.id || input.data?.session_id;
-       this.logger_.warn(`⚠️ [MP-WARN] NO SE ENCONTRÓ CART_ID (cart_...). Usando ID disponible: ${fallback}`);
-       this.logger_.warn(`📦 [MP-DEBUG-DUMP] Input keys disponibles: ${Object.keys(input).join(', ')}`);
+       this.logger_.warn(`⚠️ [MP-WARN] No se halló 'cart_' en el input. Usando ID de Sesión: ${fallback}`);
+       this.logger_.warn(`📦 [MP-DEBUG-DUMP] Input Keys: ${Object.keys(input).join(', ')}`);
+       
+       // Asignamos el fallback. Si esto es 'payses_', el Webhook tendrá que hacer trabajo extra.
        resource_id = fallback;
-    } else {
-       this.logger_.info(`🛒 [MP-DEBUG] Cart ID Correcto detectado: ${resource_id}`);
     }
 
+    // Seguridad final
     if (!resource_id) {
         resource_id = `mp_fallback_${Date.now()}`;
     }
 
     try {
-      // --- 2. URL FRONTEND ---
+      // --- DIAGNÓSTICO CURSOR: ISSUE 2 (URLS DE RETORNO) ---
+      // Aseguramos URLs limpias para evitar el 404 del Middleware
+      
       let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
       if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
       const baseUrlStr = `${rawStoreUrl}/checkout`;
@@ -83,18 +88,16 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       const failureUrl = `${baseUrlStr}?step=payment&payment_status=failure`;
       const pendingUrl = `${baseUrlStr}?step=payment&payment_status=pending`;
 
-      // --- 3. URL WEBHOOK (HTTPS FIX) ---
+      // --- WEBHOOK URL (HTTPS FIX) ---
       let backendDomain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000";
-      // Fix crítico para Railway:
       if (!backendDomain.startsWith("http")) backendDomain = `https://${backendDomain}`;
-      
       const cleanBackendUrl = backendDomain.endsWith("/") ? backendDomain.slice(0, -1) : backendDomain;
       const webhookUrl = `${cleanBackendUrl}/hooks/mp`;
 
       this.logger_.info(`🌐 [MP-DEBUG] Return URL: ${successUrl}`);
       this.logger_.info(`📡 [MP-DEBUG] Webhook URL: ${webhookUrl}`);
 
-      // --- 4. PREFERENCIA ---
+      // --- PREFERENCIA ---
       let amount = input.amount || input.context?.amount;
       if (!amount) amount = 100;
       const email = input.email || input.context?.email || "guest@budhaom.com";
@@ -111,7 +114,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             },
           ],
           payer: { email: email },
-          external_reference: resource_id, // CLAVE: Esto vincula el pago con la orden
+          external_reference: resource_id, // MP devolverá esto en el Webhook
           notification_url: webhookUrl,
           back_urls: {
             success: successUrl,
@@ -124,7 +127,9 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             local_pickup: true, 
           },
           metadata: {
-            cart_id: resource_id
+            // Guardamos ambos datos por seguridad
+            cart_id: resource_id.startsWith("cart_") ? resource_id : "unknown",
+            session_id: resource_id
           }
         },
       };
@@ -153,7 +158,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     return this.initiatePayment(input);
   }
 
-  // Boilerplate
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> {
     return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} };
   }
