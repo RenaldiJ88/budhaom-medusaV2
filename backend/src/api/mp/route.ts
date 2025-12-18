@@ -2,50 +2,48 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework";
 import { MercadoPagoConfig, Payment } from "mercadopago";
 import { completeCartWorkflow } from "@medusajs/medusa/core-flows"; 
 
-// Inicializamos MP con tu token
 const client = new MercadoPagoConfig({
   accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN || "",
 });
 
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
-  // 1. Leemos lo que manda Mercado Pago
   const body = req.body as any;
   const topic = body.topic || body.type;
   const id = body.data?.id || body.data?.ID;
 
   console.log(`🔔 [WEBHOOK] Recibido: ${topic} ID: ${id}`);
 
-  // Solo nos importa cuando es un pago
   if (topic === "payment") {
     try {
-      // 2. Preguntamos a MP: "¿Es verdad que esto se pagó?"
       const payment = await new Payment(client).get({ id });
       
       if (payment.status === "approved") {
-        console.log(`✅ [WEBHOOK] Pago Aprobado Oficialmente: ${payment.id}`);
+        let resourceId = payment.external_reference; // Podría ser cart_... o payses_...
         
-        // 3. Buscamos el ID del carrito que guardamos en "external_reference"
-        const cartId = payment.external_reference;
-
-        if (cartId) {
-          console.log(`🛒 [WEBHOOK] Intentando cerrar carrito: ${cartId}`);
-          
-          // 4. EL PASO QUE FALTABA: Ejecutar el Workflow de Medusa para crear la orden
-          try {
-            const { result } = await completeCartWorkflow(req.scope).run({
-              input: { id: cartId },
-            });
-            console.log(`🚀 [WEBHOOK] ORDEN CREADA: ${result.id}`);
-          } catch (err: any) {
-             console.log(`⚠️ [WEBHOOK] Aviso: ${err.message} (Probablemente ya se creó por el front)`);
-          }
+        console.log(`✅ [WEBHOOK] Aprobado. Referencia: ${resourceId}`);
+        
+        // --- FIX INTELIGENTE ---
+        // Si recibimos un ID de sesión (payses_), NO podemos usar completeCartWorkflow directamente con él.
+        // Pero en tu caso, con el arreglo del provider, ya debería llegar cart_.
+        // Si llega cart_, ejecutamos:
+        
+        if (resourceId && resourceId.startsWith("cart_")) {
+            console.log(`🛒 [WEBHOOK] Cerrando carrito: ${resourceId}`);
+            try {
+                const { result } = await completeCartWorkflow(req.scope).run({
+                input: { id: resourceId },
+                });
+                console.log(`🚀 [WEBHOOK] ORDEN CREADA: ${result.id}`);
+            } catch (err: any) {
+                console.log(`⚠️ [WEBHOOK] Error al cerrar (quizás ya se cerró): ${err.message}`);
+            }
+        } else {
+            console.warn(`⚠️ [WEBHOOK] Recibí un ID que no es de carrito (${resourceId}). No puedo completar la orden.`);
         }
       }
     } catch (error) {
       console.error("❌ [WEBHOOK] Error:", error);
     }
   }
-
-  // Siempre decimos "OK" a Mercado Pago para que deje de insistir
   res.sendStatus(200);
 }
