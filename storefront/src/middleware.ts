@@ -18,7 +18,7 @@ async function getRegionMap() {
     !regionMap.keys().next().value ||
     regionMapUpdated < Date.now() - 3600 * 1000
   ) {
-    // Fetch regions from Medusa. We can't use the JS client here because middleware is running on Edge and the client needs a Node environment.
+    // Fetch regions from Medusa.
     const { regions } = await fetch(`${BACKEND_URL}/store/regions`, {
       headers: {
         "x-publishable-api-key": PUBLISHABLE_API_KEY!,
@@ -58,11 +58,20 @@ async function getCountryCode(
   try {
     let countryCode
 
+    // -------------------------------------------------------------------
+    // 🔥 HACK DE EMERGENCIA: BYPASS PARA ARGENTINA
+    // Si la URL ya tiene "/ar", lo forzamos como válido sin preguntar al mapa.
+    // Esto evita el 404 si el cache del middleware está viejo.
+    const urlCountryCode = request.nextUrl.pathname.split("/")[1]?.toLowerCase()
+    
+    if (urlCountryCode === "ar") {
+        return "ar";
+    }
+    // -------------------------------------------------------------------
+
     const vercelCountryCode = request.headers
       .get("x-vercel-ip-country")
       ?.toLowerCase()
-
-    const urlCountryCode = request.nextUrl.pathname.split("/")[1]?.toLowerCase()
 
     if (urlCountryCode && regionMap.has(urlCountryCode)) {
       countryCode = urlCountryCode
