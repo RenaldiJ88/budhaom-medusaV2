@@ -37,48 +37,41 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     this.logger_.info(`🔥 [MP-INIT] Procesando solicitud de pago...`);
 
     try {
-      // 1. DETECCIÓN DE ID (Basado en tu LOG real)
+      // 1. DETECCIÓN DE ID
       let resource_id = 
         input.resource_id || 
         input.context?.resource_id || 
-        input.data?.session_id || // <--- ESTO ES LO QUE FALTABA (payses_...)
+        input.data?.session_id || 
         input.id;
 
       if (!resource_id) {
-        // Fallback de última instancia
         this.logger_.warn(`⚠️ [MP-WARN] ID no encontrado. Input: ${JSON.stringify(input)}`);
         resource_id = `mp_fallback_${Date.now()}`;
       } else {
         this.logger_.info(`🛒 [MP-DEBUG] ID Confirmado: ${resource_id}`);
       }
 
-      // 2. CONSTRUCCIÓN DE URL SEGURA (Para evitar el 404)
-      // Tomamos la variable de Railway
-      const rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
+      // 2. CONSTRUCCIÓN DE URL (CORREGIDO: Concatenación manual)
+      // Tomamos la variable de Railway tal cual está (con /ar)
+      let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
       
-      // Usamos la API URL nativa para evitar errores de // dobles
-      // Si rawStoreUrl ya tiene /ar, lo respetamos.
-      const baseUrl = new URL(rawStoreUrl); 
+      // Quitamos barra final si existe para que la unión quede limpia
+      if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
       
-      // Construimos las URLs de retorno
-      // Nota: encodeURIComponent no es necesario para la base, pero Next.js debe manejar los params
-      const successUrl = new URL("/checkout", baseUrl);
-      successUrl.searchParams.set("step", "payment");
-      successUrl.searchParams.set("payment_status", "success");
+      // 🔥 AQUÍ ESTABA EL ERROR: Ahora pegamos el /checkout manualmente
+      // Esto garantiza que quede: https://.../ar/checkout
+      const baseUrlStr = `${rawStoreUrl}/checkout`;
 
-      const failureUrl = new URL("/checkout", baseUrl);
-      failureUrl.searchParams.set("step", "payment");
-      failureUrl.searchParams.set("payment_status", "failure");
-      
-      const pendingUrl = new URL("/checkout", baseUrl);
-      pendingUrl.searchParams.set("step", "payment");
-      pendingUrl.searchParams.set("payment_status", "pending");
+      // Construimos las URLs finales agregando los parámetros
+      const successUrl = `${baseUrlStr}?step=payment&payment_status=success`;
+      const failureUrl = `${baseUrlStr}?step=payment&payment_status=failure`;
+      const pendingUrl = `${baseUrlStr}?step=payment&payment_status=pending`;
 
-      this.logger_.info(`🌐 [MP-DEBUG] Return URL: ${successUrl.toString()}`);
+      this.logger_.info(`🌐 [MP-DEBUG] Return URL FINAL: ${successUrl}`);
 
       // 3. DATOS MONETARIOS
       let amount = input.amount || input.context?.amount;
-      if (!amount) amount = 100; // Seguridad
+      if (!amount) amount = 100;
 
       const email = input.email || input.context?.email || "guest@budhaom.com";
 
@@ -98,9 +91,9 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           external_reference: resource_id,
           
           back_urls: {
-            success: successUrl.toString(),
-            failure: failureUrl.toString(),
-            pending: pendingUrl.toString(),
+            success: successUrl,
+            failure: failureUrl,
+            pending: pendingUrl,
           },
           auto_return: "approved",
           shipments: {
