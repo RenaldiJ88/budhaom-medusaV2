@@ -58,20 +58,11 @@ async function getCountryCode(
   try {
     let countryCode
 
-    // -------------------------------------------------------------------
-    // 🔥 HACK DE EMERGENCIA: BYPASS PARA ARGENTINA
-    // Si la URL ya tiene "/ar", lo forzamos como válido sin preguntar al mapa.
-    // Esto evita el 404 si el cache del middleware está viejo.
-    const urlCountryCode = request.nextUrl.pathname.split("/")[1]?.toLowerCase()
-    
-    if (urlCountryCode === "ar") {
-        return "ar";
-    }
-    // -------------------------------------------------------------------
-
     const vercelCountryCode = request.headers
       .get("x-vercel-ip-country")
       ?.toLowerCase()
+
+    const urlCountryCode = request.nextUrl.pathname.split("/")[1]?.toLowerCase()
 
     if (urlCountryCode && regionMap.has(urlCountryCode)) {
       countryCode = urlCountryCode
@@ -97,6 +88,15 @@ async function getCountryCode(
  * Middleware to handle region selection and onboarding status.
  */
 export async function middleware(request: NextRequest) {
+  // 🔥🔥🔥 HACK DE EMERGENCIA AQUI (PRIMERA LINEA) 🔥🔥🔥
+  // Si la URL es /ar, pasamos directo INMEDIATAMENTE.
+  // Esto evita que getRegionMap() se ejecute y lance un notFound() si falla.
+  const urlCountryCode = request.nextUrl.pathname.split("/")[1]?.toLowerCase()
+  if (urlCountryCode === "ar") {
+    return NextResponse.next();
+  }
+  // --------------------------------------------------------
+
   const searchParams = request.nextUrl.searchParams
   const isOnboarding = searchParams.get("onboarding") === "true"
   const cartId = searchParams.get("cart_id")
