@@ -1,45 +1,59 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http";
 import { ContainerRegistrationKeys } from "@medusajs/utils";
-
-// HE ELIMINADO LA IMPORTACIÓN DEL WORKFLOW PARA QUE NO DE ERROR
-// Una vez que el webhook funcione, buscaremos el workflow correcto.
+import { MercadoPagoConfig, Payment } from 'mercadopago';
 
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   try {
-    // SOLUCIÓN ERRORES 2 y 3:
-    // Forzamos a TypeScript a tratar el body como "cualquier cosa" (any)
     const eventData = req.body as any;
-    
     const type = eventData.type;
     const data = eventData.data;
 
-    // Solo nos interesa si es un pago
     if (type !== "payment") {
-       // Respondemos OK para que MP deje de insistir con eventos que no son pagos
        res.status(200).send("Ignored");
        return; 
     }
 
     const id = data?.id;
-
     if (!id) {
        res.status(400).send("No ID found");
        return;
     }
 
     const logger = req.scope.resolve(ContainerRegistrationKeys.LOGGER);
-    
-    // Imprimimos en consola para confirmar que llega
-    logger.info(`✅ ÉXITO: Recibido webhook de Mercado Pago. Payment ID: ${id}`);
+    logger.info(`🔍 Procesando Webhook para ID: ${id}`);
 
-    // AQUÍ IRÁ LA LÓGICA DE ACTUALIZAR EL PAGO MÁS ADELANTE
-    // Por ahora solo queremos ver el mensaje de éxito en la consola.
+    // --- AQUÍ ESTÁ EL CAMBIO ---
+    // Usamos process.env para leer la variable de Railway
+    // Asegúrate que en Railway la variable se llame exactamente 'MP_ACCESS_TOKEN'
+    const accessToken = process.env.MP_ACCESS_TOKEN;
+
+    if (!accessToken) {
+        logger.error("❌ ERROR CRÍTICO: No se encontró MP_ACCESS_TOKEN en las variables de entorno");
+        res.status(500).send("Server Configuration Error");
+        return;
+    }
+
+    const client = new MercadoPagoConfig({ accessToken: accessToken });
+    // ---------------------------
+
+    const payment = new Payment(client);
+    const paymentInfo = await payment.get({ id: id });
+    
+    const status = paymentInfo.status;
+    const externalReference = paymentInfo.external_reference;
+
+    logger.info(`📊 ESTADO MP: ${status}`);
+    logger.info(`🛒 REFERENCIA MEDUSA: ${externalReference}`);
+
+    if (status === 'approved') {
+        logger.info("✅ PAGO APROBADO - Listo para capturar");
+    }
 
     res.status(200).send("OK");
 
   } catch (error) {
     const logger = req.scope.resolve(ContainerRegistrationKeys.LOGGER);
     logger.error(`Error en Webhook MP: ${error}`);
-    res.status(500).send("Internal Server Error");
+    res.status(200).send("Error processed"); 
   }
 }
