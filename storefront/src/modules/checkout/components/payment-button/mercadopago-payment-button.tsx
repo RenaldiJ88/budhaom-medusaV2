@@ -3,7 +3,7 @@
 import { Button } from "@medusajs/ui"
 import { useState, useEffect } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
-import { placeOrder } from "@lib/data/cart" // Importamos la misma función que usan Stripe/Manual
+import { placeOrder } from "@lib/data/cart" 
 import Spinner from "@modules/common/icons/spinner"
 
 export const MercadoPagoPaymentButton = ({
@@ -25,9 +25,9 @@ export const MercadoPagoPaymentButton = ({
   // Leemos el estado del pago desde la URL (lo que manda MP al volver)
   const paymentStatus = searchParams.get("payment_status")
 
-  // --- 1. LÓGICA DE RETORNO (¡LO QUE FALTABA!) ---
+  // --- 1. LÓGICA DE RETORNO ---
   useEffect(() => {
-    // Si Mercado Pago nos devuelve con "success", cerramos la orden automáticamente
+    // Si Mercado Pago nos devuelve con "success", intentamos cerrar la orden
     if (paymentStatus === "success" && !submitting) {
       console.log("✅ [FRONTEND] Pago exitoso detectado en URL via Mercado Pago.")
       handleOrderCompletion()
@@ -44,11 +44,32 @@ export const MercadoPagoPaymentButton = ({
     setErrorMessage(null)
 
     try {
-      // Esta función llama a Medusa: "Cierra el carrito, crea la orden"
+      // Intentamos cerrar el carrito y crear la orden
       await placeOrder()
-      // placeOrder usualmente redirige a /order/confirmed internamente
+      // Si tiene éxito, 'placeOrder' se encarga de redirigir a /order/confirmed/...
     } catch (err: any) {
       console.error("❌ [FRONTEND] Error al cerrar la orden:", err)
+      
+      const errorText = (err.message || "").toLowerCase();
+
+      // --- MANEJO DE RACE CONDITION (Webhook vs Frontend) ---
+      // Si el error dice que el carrito "no existe", "ya fue completado" o da error 404/409,
+      // pero Mercado Pago nos dijo "success", asumimos que el Webhook ya creó la orden.
+      if (
+        errorText.includes("completed") || 
+        errorText.includes("found") || // "not found"
+        errorText.includes("exist") || // "does not exist"
+        errorText.includes("404") ||
+        errorText.includes("409")
+      ) {
+         console.warn("⚠️ [FRONTEND] El Webhook ganó la carrera. Redirigiendo a órdenes...");
+         // Como placeOrder falló, no tenemos el ID de la orden nueva para ir a /order/confirmed/ID.
+         // Lo más seguro es mandar al usuario a su lista de órdenes.
+         router.push("/account/orders");
+         return;
+      }
+
+      // Si es un error real (ej: tarjeta rechazada por Medusa), mostramos el mensaje.
       setErrorMessage(err.message || "Error al procesar la orden en Medusa.")
       setSubmitting(false)
     }
@@ -60,6 +81,7 @@ export const MercadoPagoPaymentButton = ({
     setErrorMessage(null)
 
     // Buscamos el link generado por el backend
+    // Priorizamos sandbox_init_point si estamos probando, o init_point normal
     const paymentLink = session?.data?.init_point || session?.data?.sandbox_init_point
 
     if (paymentLink) {
@@ -67,7 +89,7 @@ export const MercadoPagoPaymentButton = ({
       window.location.href = paymentLink
     } else {
       console.error("❌ [FRONTEND] No se encontró link de pago en la sesión.")
-      setErrorMessage("Error de conexión con Mercado Pago. Intenta recargar.")
+      setErrorMessage("Error de conexión con Mercado Pago. Refresca la página.")
       setSubmitting(false)
     }
   }
@@ -93,15 +115,15 @@ export const MercadoPagoPaymentButton = ({
 
       {/* Mensajes de error o estado */}
       {errorMessage && (
-        <div className="text-red-500 text-sm mt-2 text-center bg-red-50 p-2 rounded">
+        <div className="text-red-600 text-sm mt-2 text-center bg-red-50 p-2 rounded border border-red-200">
           {errorMessage}
         </div>
       )}
       
-      {/* Aviso de debug si notReady es true (opcional, puedes quitarlo en prod) */}
+      {/* Aviso de debug si notReady es true */}
       {notReady && (
         <p className="text-xs text-orange-500 text-center">
-          Faltan datos de envío para habilitar el pago real.
+          Completa los datos de envío para habilitar el pago.
         </p>
       )}
     </div>
