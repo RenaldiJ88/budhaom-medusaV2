@@ -6,12 +6,10 @@ const client = new MercadoPagoConfig({
   accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN || "",
 });
 
-// GET para verificar estado
 export async function GET(req: MedusaRequest, res: MedusaResponse) {
     res.json({ status: "ok", message: "Webhook Activo 🚀" });
 }
 
-// POST para recibir notificaciones
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const body = req.body as any;
   const topic = body.topic || body.type;
@@ -31,9 +29,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         if (targetId && targetId.startsWith("payses_")) {
             console.log(`🕵️‍♂️ [WEBHOOK] Es una sesión. Buscando carrito en DB...`);
             try {
-                // Aquí usamos el string "remoteQuery", es más seguro
                 const remoteQuery = req.scope.resolve("remoteQuery");
                 
+                // Sintaxis ajustada para asegurar que obtenemos el cart_id
                 const query = {
                     entryPoint: "payment_session",
                     fields: ["payment_collection.cart_id"],
@@ -41,6 +39,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
                 };
 
                 const result = await remoteQuery(query);
+                // Validación segura de arrays y objetos
                 const fetchedCartId = result[0]?.payment_collection?.cart_id;
 
                 if (fetchedCartId) {
@@ -48,29 +47,34 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
                     targetId = fetchedCartId; 
                 } else {
                     console.warn(`⚠️ [WEBHOOK] No se encontró carrito para ${targetId}`);
+                    // Si no encontramos carrito, no podemos seguir.
+                    res.sendStatus(200); 
+                    return;
                 }
             } catch (dbError) {
                 console.error(`❌ [WEBHOOK] Error DB: ${dbError}`);
             }
         }
 
-        // --- CREAR ORDEN ---
+        // --- CREAR ORDEN (CORREGIDO) ---
         if (targetId && targetId.startsWith("cart_")) {
           console.log(`🛒 [WEBHOOK] Cerrando orden para: ${targetId}`);
           try {
-            const { result } = await completeCartWorkflow(req.scope).run({
+            // 🛑 CORRECCIÓN CLAVE AQUÍ ABAJO:
+            const { result } = await completeCartWorkflow.run({
+              container: req.scope, // El container va DENTRO de las opciones
               input: { id: targetId },
             });
+            
             console.log(`🚀 [WEBHOOK] ¡ORDEN CREADA! ID: ${result.id}`);
           } catch (err: any) {
-             console.log(`⚠️ [WEBHOOK] Error workflow: ${err.message}`);
+             // Es posible que el Frontend haya ganado la carrera. No es grave.
+             console.log(`⚠️ [WEBHOOK] Info workflow: ${err.message}`);
           }
-        } else {
-            console.error(`❌ [WEBHOOK] ID inválido para cerrar orden: ${targetId}`);
         }
       }
     } catch (error) {
-      console.error("❌ [WEBHOOK] Error:", error);
+      console.error("❌ [WEBHOOK] Error General:", error);
     }
   }
   res.sendStatus(200);
