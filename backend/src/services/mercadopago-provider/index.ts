@@ -34,32 +34,28 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    this.logger_.info(`🔥 [MP-INIT] Iniciando (Modo Simple)...`);
+    this.logger_.info(`🔥 [MP-INIT] Iniciando...`);
     
-    // 1. OBTENER ID (Sin consultas complejas)
-    // Preferimos cart_id si viene, sino usamos session_id (payses_)
-    let resource_id = input.resource_id;
-
-    if (!resource_id || !resource_id.startsWith("cart_")) {
-        // Buscamos en lugares comunes
-        resource_id = input.context?.cart_id || input.data?.session_id || input.id;
-    }
+    // 1. OBTENER ID (Sin lógica compleja para no romper)
+    // Usamos el ID de sesión (payses_) que sabemos que llega en input.data
+    let resource_id = input.data?.session_id || input.id || input.resource_id;
 
     if (!resource_id) {
         resource_id = `fallback_${Date.now()}`;
-        this.logger_.warn(`⚠️ [MP-WARN] No se halló ID. Usando Fallback: ${resource_id}`);
+        this.logger_.warn(`⚠️ [MP-WARN] No ID. Usando Fallback: ${resource_id}`);
     } else {
-        this.logger_.info(`🛒 [MP-DEBUG] Usando ID para referencia: ${resource_id}`);
+        this.logger_.info(`🛒 [MP-DEBUG] Enviando referencia a MP: ${resource_id}`);
     }
 
     // --- URLS ---
     let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
     if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
     
-    // URL Frontend
-    const successUrl = `${rawStoreUrl}/checkout?step=payment&payment_status=success`;
-    const failureUrl = `${rawStoreUrl}/checkout?step=payment&payment_status=failure`;
-    const pendingUrl = `${rawStoreUrl}/checkout?step=payment&payment_status=pending`;
+    const baseUrlStr = `${rawStoreUrl}/checkout`;
+    // Agregamos parámetros para que el usuario vea el resultado visualmente
+    const successUrl = `${baseUrlStr}?step=payment&payment_status=success`;
+    const failureUrl = `${baseUrlStr}?step=payment&payment_status=failure`;
+    const pendingUrl = `${baseUrlStr}?step=payment&payment_status=pending`;
 
     // URL Webhook (Backend)
     let backendDomain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000";
@@ -67,7 +63,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     const cleanBackendUrl = backendDomain.endsWith("/") ? backendDomain.slice(0, -1) : backendDomain;
     const webhookUrl = `${cleanBackendUrl}/hooks/mp`;
 
-    this.logger_.info(`🌐 [MP-DEBUG] Webhook apuntando a: ${webhookUrl}`);
+    this.logger_.info(`🌐 [MP-DEBUG] Webhook URL: ${webhookUrl}`);
 
     // --- PREFERENCIA ---
     let amount = input.amount || input.context?.amount;
@@ -86,7 +82,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           },
         ],
         payer: { email: email },
-        external_reference: resource_id, // Enviamos payses_... o cart_...
+        external_reference: resource_id, // Enviamos payses_...
         notification_url: webhookUrl,
         back_urls: { success: successUrl, failure: failureUrl, pending: pendingUrl },
         auto_return: "approved",
@@ -116,7 +112,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     }
   }
 
-  // Métodos Boilerplate
+  // Boilerplate standard
   async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { return this.initiatePayment(input); }
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} }; }
   async cancelPayment(input: any): Promise<SessionData> { return input.session_data || {}; }

@@ -1,12 +1,17 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework";
 import { MercadoPagoConfig, Payment } from "mercadopago";
 import { completeCartWorkflow } from "@medusajs/medusa/core-flows"; 
-import { ContainerRegistrationKeys } from "@medusajs/framework/utils";
 
 const client = new MercadoPagoConfig({
   accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN || "",
 });
 
+// GET para verificar estado
+export async function GET(req: MedusaRequest, res: MedusaResponse) {
+    res.json({ status: "ok", message: "Webhook Activo 🚀" });
+}
+
+// POST para recibir notificaciones
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const body = req.body as any;
   const topic = body.topic || body.type;
@@ -16,25 +21,23 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
   if (topic === "payment") {
     try {
-      // 1. Consultar estado en Mercado Pago
       const payment = await new Payment(client).get({ id });
       
       if (payment.status === "approved") {
-        console.log(`✅ [WEBHOOK] Pago Aprobado. Ref: ${payment.external_reference}`);
+        let targetId = payment.external_reference;
+        console.log(`✅ [WEBHOOK] Aprobado. Ref: ${targetId}`);
         
-        let cartId = payment.external_reference;
-
-        // 2. LÓGICA DE RESOLUCIÓN: Si es una sesión (payses_), buscamos el cart_id
-        if (cartId && cartId.startsWith("payses_")) {
-            console.log(`🕵️‍♂️ [WEBHOOK] ID de sesión detectado (${cartId}). Buscando carrito en DB...`);
+        // --- TRADUCCIÓN PAYSES -> CART ---
+        if (targetId && targetId.startsWith("payses_")) {
+            console.log(`🕵️‍♂️ [WEBHOOK] Es una sesión. Buscando carrito en DB...`);
             try {
-                // AQUÍ SÍ FUNCIONA EL RESOLVE PORQUE 'req.scope' ES UN CONTENEDOR COMPLETO
-                const remoteQuery = req.scope.resolve(ContainerRegistrationKeys.REMOTE_QUERY);
+                // Aquí usamos el string "remoteQuery", es más seguro
+                const remoteQuery = req.scope.resolve("remoteQuery");
                 
                 const query = {
                     entryPoint: "payment_session",
                     fields: ["payment_collection.cart_id"],
-                    filters: { id: cartId }
+                    filters: { id: targetId }
                 };
 
                 const result = await remoteQuery(query);
@@ -42,34 +45,33 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
                 if (fetchedCartId) {
                     console.log(`🎯 [WEBHOOK] ¡Carrito encontrado!: ${fetchedCartId}`);
-                    cartId = fetchedCartId; // Reemplazamos payses_ por cart_
+                    targetId = fetchedCartId; 
                 } else {
-                    console.warn(`⚠️ [WEBHOOK] No se encontró carrito para la sesión ${cartId}`);
+                    console.warn(`⚠️ [WEBHOOK] No se encontró carrito para ${targetId}`);
                 }
             } catch (dbError) {
                 console.error(`❌ [WEBHOOK] Error DB: ${dbError}`);
             }
         }
 
-        // 3. COMPLETAR LA ORDEN
-        if (cartId && cartId.startsWith("cart_")) {
-          console.log(`🛒 [WEBHOOK] Cerrando orden para carrito: ${cartId}`);
+        // --- CREAR ORDEN ---
+        if (targetId && targetId.startsWith("cart_")) {
+          console.log(`🛒 [WEBHOOK] Cerrando orden para: ${targetId}`);
           try {
             const { result } = await completeCartWorkflow(req.scope).run({
-              input: { id: cartId },
+              input: { id: targetId },
             });
-            console.log(`🚀 [WEBHOOK] ORDEN CREADA EXITOSAMENTE: ${result.id}`);
+            console.log(`🚀 [WEBHOOK] ¡ORDEN CREADA! ID: ${result.id}`);
           } catch (err: any) {
-             console.log(`⚠️ [WEBHOOK] Aviso al cerrar: ${err.message}`);
+             console.log(`⚠️ [WEBHOOK] Error workflow: ${err.message}`);
           }
         } else {
-            console.error(`❌ [WEBHOOK] No tenemos un Cart ID válido. No se puede crear la orden.`);
+            console.error(`❌ [WEBHOOK] ID inválido para cerrar orden: ${targetId}`);
         }
       }
     } catch (error) {
-      console.error("❌ [WEBHOOK] Error procesando pago:", error);
+      console.error("❌ [WEBHOOK] Error:", error);
     }
   }
-
   res.sendStatus(200);
 }
