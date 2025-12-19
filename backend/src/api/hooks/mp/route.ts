@@ -1,7 +1,6 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http";
 import { ContainerRegistrationKeys } from "@medusajs/utils";
 import { MercadoPagoConfig, Payment } from 'mercadopago';
-// Importamos el Workflow oficial para completar carritos
 import { completeCartWorkflow } from "@medusajs/medusa/core-flows";
 
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
@@ -35,26 +34,39 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const paymentInfo = await payment.get({ id: id });
     
     const status = paymentInfo.status;
-    const externalReference = paymentInfo.external_reference; // Esto es 'payses_...'
+    const externalReference = paymentInfo.external_reference; // Es 'payses_...'
 
     logger.info(`🔍 ID: ${id} | Estado: ${status} | Ref: ${externalReference}`);
 
     if (status === 'approved' && externalReference) {
-        
-        // 1. BUSCAR EL CART ID USANDO LA REFERENCIA DE PAGO
-        // En Medusa v2 usamos 'QUERY' para buscar datos relacionales
         const query = req.scope.resolve(ContainerRegistrationKeys.QUERY);
         
-        // Buscamos un carrito que esté asociado a esta sesión de pago
+        // --- PASO 1: Buscar la Payment Collection usando la Sesión ---
+        // Consultamos directamente la entidad 'payment_session' que es más seguro
+        const { data: sessions } = await query.graph({
+            entity: "payment_session",
+            fields: ["payment_collection_id"],
+            filters: {
+                id: externalReference
+            }
+        });
+
+        const paymentCollectionId = sessions[0]?.payment_collection_id;
+
+        if (!paymentCollectionId) {
+            logger.error(`❌ No se encontró payment_collection para la sesión ${externalReference}`);
+            res.status(200).send("OK");
+            return;
+        }
+
+        logger.info(`🔗 Payment Collection encontrada: ${paymentCollectionId}`);
+
+        // --- PASO 2: Buscar el Carrito asociado a esa Collection ---
         const { data: carts } = await query.graph({
             entity: "cart",
             fields: ["id"],
             filters: {
-                payment_collection: {
-                    payment_sessions: {
-                        id: externalReference
-                    }
-                }
+                payment_collection_id: paymentCollectionId
             }
         });
 
@@ -64,8 +76,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             logger.info(`🛒 Cart ID encontrado: ${cartId}. Ejecutando Workflow...`);
             
             try {
-                // 2. EJECUTAR EL WORKFLOW PARA CREAR LA ORDEN
-                // Esto reemplaza al antiguo cartService.complete()
+                // --- PASO 3: Completar el Carrito (Crear Orden) ---
                 const { result } = await completeCartWorkflow(req.scope)
                     .run({
                         input: { id: cartId }
@@ -73,11 +84,16 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
                 logger.info(`🎉 ¡ORDEN CREADA EXITOSAMENTE! ID: ${result.id}`);
             } catch (workflowError) {
-                // Si falla es probable que ya se haya completado antes
-                logger.error(`⚠️ Error en Workflow (posible duplicado): ${(workflowError as any).message}`);
+                // Si el error dice que ya se completó, es buena señal
+                const msg = (workflowError as any).message || "";
+                if (msg.includes("completed")) {
+                    logger.info("✅ La orden ya estaba creada.");
+                } else {
+                    logger.error(`⚠️ Error en Workflow: ${msg}`);
+                }
             }
         } else {
-            logger.error(`❌ No se encontró ningún Carrito asociado a la sesión ${externalReference}`);
+            logger.error(`❌ No se encontró ningún Carrito con payment_collection_id: ${paymentCollectionId}`);
         }
     }
 
@@ -85,6 +101,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
   } catch (error) {
     logger.error(`Error Webhook: ${(error as any).message}`);
+    // Respondemos OK a MercadoPago para que deje de reintentar si es un error interno nuestro
     res.status(200).send("Error processed"); 
   }
 }
