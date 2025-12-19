@@ -25,7 +25,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     // --- AQUÍ ESTÁ EL CAMBIO ---
     // Usamos process.env para leer la variable de Railway
     // Asegúrate que en Railway la variable se llame exactamente 'MP_ACCESS_TOKEN'
-    const accessToken = process.env.MP_ACCESS_TOKEN;
+    const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 
     if (!accessToken) {
         logger.error("❌ ERROR CRÍTICO: No se encontró MP_ACCESS_TOKEN en las variables de entorno");
