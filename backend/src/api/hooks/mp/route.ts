@@ -41,43 +41,35 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     if (status === 'approved' && externalReference) {
         const query = req.scope.resolve(ContainerRegistrationKeys.QUERY);
         
-        // --- PASO 1: Buscar la Payment Collection usando la Sesión ---
+        logger.info("🕵️ Buscando el camino desde la Sesión hasta el Carrito...");
+
+        // --- ESTRATEGIA UNIFICADA V2 ---
+        // En lugar de ir paso a paso, pedimos la ruta completa.
+        // La clave es "payment_collection.cart.id"
+        // Esto le dice a Medusa: "Usa los Links para traerme el ID del carrito conectado"
         const { data: sessions } = await query.graph({
             entity: "payment_session",
-            fields: ["payment_collection_id"],
+            fields: [
+                "id", 
+                "payment_collection.id",
+                "payment_collection.cart.id" // <--- LA CLAVE MÁGICA
+            ],
             filters: {
                 id: externalReference
             }
         });
 
-        const paymentCollectionId = sessions[0]?.payment_collection_id;
-
-        if (!paymentCollectionId) {
-            logger.error(`❌ No se encontró payment_collection para la sesión ${externalReference}`);
-            res.status(200).send("OK");
-            return;
-        }
-
-        logger.info(`🔗 Payment Collection encontrada: ${paymentCollectionId}`);
-
-        // --- PASO 2: Buscar el Cart ID dentro de la Payment Collection ---
-        // CAMBIO AQUÍ: Preguntamos a la colección directamente por su cart_id
-        const { data: collections } = await query.graph({
-            entity: "payment_collection",
-            fields: ["cart_id"], 
-            filters: {
-                id: paymentCollectionId
-            }
-        });
-
-        // Obtenemos el cart_id desde la colección
-        const cartId = collections[0]?.cart_id;
+        // Verificamos qué encontramos para poder depurar si falla
+        const session = sessions[0];
+        const paymentCollection = session?.payment_collection;
+        const cart = paymentCollection?.cart;
+        const cartId = cart?.id;
 
         if (cartId) {
             logger.info(`🛒 Cart ID encontrado: ${cartId}. Ejecutando Workflow...`);
             
             try {
-                // --- PASO 3: Completar el Carrito (Crear Orden) ---
+                // --- COMPLETAR EL CARRITO ---
                 const { result } = await completeCartWorkflow(req.scope)
                     .run({
                         input: { id: cartId }
@@ -93,7 +85,11 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
                 }
             }
         } else {
-            logger.error(`❌ La Payment Collection ${paymentCollectionId} no tiene un cart_id asociado.`);
+            // Logs detallados para saber dónde se rompió la cadena
+            logger.error("❌ No se pudo resolver el Cart ID.");
+            logger.info(`   - Sesión encontrada: ${!!session}`);
+            logger.info(`   - Collection encontrada: ${!!paymentCollection} (${paymentCollection?.id})`);
+            logger.info(`   - Cart objeto encontrado: ${!!cart}`);
         }
     }
 
