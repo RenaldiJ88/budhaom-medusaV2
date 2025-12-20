@@ -34,7 +34,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const paymentInfo = await payment.get({ id: id });
     
     const status = paymentInfo.status;
-    const externalReference = paymentInfo.external_reference; // Es 'payses_...'
+    const externalReference = paymentInfo.external_reference; 
 
     logger.info(`🔍 ID: ${id} | Estado: ${status} | Ref: ${externalReference}`);
 
@@ -42,7 +42,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         const query = req.scope.resolve(ContainerRegistrationKeys.QUERY);
         
         // --- PASO 1: Buscar la Payment Collection usando la Sesión ---
-        // Consultamos directamente la entidad 'payment_session' que es más seguro
         const { data: sessions } = await query.graph({
             entity: "payment_session",
             fields: ["payment_collection_id"],
@@ -61,16 +60,18 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
         logger.info(`🔗 Payment Collection encontrada: ${paymentCollectionId}`);
 
-        // --- PASO 2: Buscar el Carrito asociado a esa Collection ---
-        const { data: carts } = await query.graph({
-            entity: "cart",
-            fields: ["id"],
+        // --- PASO 2: Buscar el Cart ID dentro de la Payment Collection ---
+        // CAMBIO AQUÍ: Preguntamos a la colección directamente por su cart_id
+        const { data: collections } = await query.graph({
+            entity: "payment_collection",
+            fields: ["cart_id"], 
             filters: {
-                payment_collection_id: paymentCollectionId
+                id: paymentCollectionId
             }
         });
 
-        const cartId = carts[0]?.id;
+        // Obtenemos el cart_id desde la colección
+        const cartId = collections[0]?.cart_id;
 
         if (cartId) {
             logger.info(`🛒 Cart ID encontrado: ${cartId}. Ejecutando Workflow...`);
@@ -84,7 +85,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
                 logger.info(`🎉 ¡ORDEN CREADA EXITOSAMENTE! ID: ${result.id}`);
             } catch (workflowError) {
-                // Si el error dice que ya se completó, es buena señal
                 const msg = (workflowError as any).message || "";
                 if (msg.includes("completed")) {
                     logger.info("✅ La orden ya estaba creada.");
@@ -93,7 +93,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
                 }
             }
         } else {
-            logger.error(`❌ No se encontró ningún Carrito con payment_collection_id: ${paymentCollectionId}`);
+            logger.error(`❌ La Payment Collection ${paymentCollectionId} no tiene un cart_id asociado.`);
         }
     }
 
@@ -101,7 +101,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
   } catch (error) {
     logger.error(`Error Webhook: ${(error as any).message}`);
-    // Respondemos OK a MercadoPago para que deje de reintentar si es un error interno nuestro
     res.status(200).send("Error processed"); 
   }
 }
