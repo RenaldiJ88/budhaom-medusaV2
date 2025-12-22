@@ -21,73 +21,58 @@ export const MercadoPagoPaymentButton = ({
   const searchParams = useSearchParams()
   const router = useRouter()
   
-  // Leemos lo que dice Mercado Pago en la URL
   const paymentStatus = searchParams.get("payment_status")
 
-  // --- 1. CUANDO VOLVEMOS DE MERCADO PAGO ---
+  // --- 1. LÓGICA DE RETORNO (CUANDO VUELVE DE MP) ---
   useEffect(() => {
-    // Si la URL dice que pagamos, intentamos cerrar la orden
+    // CAMBIO RADICAL: Si el pago es exitoso, NO LLAMAMOS A MEDUSA.
+    // Confiamos 100% en que el Webhook ya hizo el trabajo o lo hará en segundos.
+    // Esto evita el error "Payment authorization failed" en el backend.
+    
     if ((paymentStatus === "success" || paymentStatus === "approved") && !submitting) {
-      console.log("✅ [FRONTEND] Pago exitoso en URL. Iniciando cierre de orden...")
-      handleOrderCompletion()
+      console.log("✅ [FRONTEND] Pago aprobado. Delegando creación de orden al Webhook.")
+      setSubmitting(true)
+      
+      // Esperamos 2 segundos de cortesía para dar tiempo al Webhook y redirigimos
+      setTimeout(() => {
+        router.push("/account/orders")
+      }, 1500)
     } 
     else if (paymentStatus === "failure") {
-      setErrorMessage("El pago fue rechazado. Intenta nuevamente.")
+      setErrorMessage("El pago fue rechazado por Mercado Pago. Intenta nuevamente.")
     }
   }, [paymentStatus])
 
+  // Esta función solo se usa si falla algo y el usuario reintenta manual, 
+  // NO se usa en el retorno automático exitoso.
   const handleOrderCompletion = async () => {
     setSubmitting(true)
     setErrorMessage(null)
 
     try {
       await placeOrder()
-      // Si funciona, placeOrder redirige solo.
     } catch (err: any) {
-      console.error("❌ [FRONTEND] Medusa devolvió error:", err)
-      
+      console.error("❌ [FRONTEND] Error:", err)
       const errorText = (err.message || "").toLowerCase();
 
-      // --- AQUÍ ESTÁ LA MAGIA PARA IGNORAR EL ERROR ---
-      
-      // 1. Si el Webhook ya creó la orden (Error 404/409/completed)
-      if (
-        errorText.includes("completed") || 
-        errorText.includes("found") || 
-        errorText.includes("exist") || 
-        errorText.includes("404") ||
-        errorText.includes("409")
-      ) {
-         console.warn("⚠️ Webhook ganó. Redirigiendo...");
+      // Si el webhook ya ganó, redirigimos
+      if (errorText.includes("completed") || errorText.includes("found") || errorText.includes("404")) {
          router.push("/account/orders");
          return;
       }
-
-      // 2. Si la API es lenta (Tu error actual: Authorization Failed)
-      // Si la URL dice "approved" PERO Medusa tira error de autorización,
-      // IGNORAMOS el error y confiamos en que el Webhook terminará el trabajo.
-      if (
-        (paymentStatus === "success" || paymentStatus === "approved") &&
-        (errorText.includes("authorization") || errorText.includes("authorized") || errorText.includes("failed"))
-      ) {
-          console.warn("🚀 Pago aprobado en URL. Ignorando error de Backend y redirigiendo.");
-          router.push("/account/orders");
-          return;
-      }
-
-      // Solo mostramos el error si es algo real (ej: sin stock)
+      
       setErrorMessage(err.message || "Error al procesar la orden.")
       setSubmitting(false)
     }
   }
 
-  // --- 2. BOTÓN DE PAGAR (Lógica Móvil Segura) ---
+  // --- 2. LÓGICA DE IDA (IR A PAGAR) ---
   const handlePayment = () => {
     setErrorMessage(null)
     const paymentLink = session?.data?.init_point || session?.data?.sandbox_init_point
 
     if (!paymentLink) {
-      setErrorMessage("Error: No hay link de pago.")
+      setErrorMessage("Error de conexión con Mercado Pago.")
       return;
     }
 
@@ -106,7 +91,10 @@ export const MercadoPagoPaymentButton = ({
         {submitting ? (
           <div className="flex items-center gap-2">
              <Spinner />
-             {paymentStatus === "approved" ? "Finalizando..." : "Redirigiendo..."}
+             {/* Mensaje amigable mientras redirigimos */}
+             {paymentStatus === "approved" || paymentStatus === "success" 
+                ? "Pago recibido. Procesando..." 
+                : "Redirigiendo..."}
           </div>
         ) : (
           "PAGAR CON MERCADO PAGO"
