@@ -95,11 +95,20 @@ const medusaConfig = {
       }
     }] : []),
     // 3. NOTIFICATION MODULE
-    ...(SENDGRID_API_KEY && SENDGRID_FROM_EMAIL || RESEND_API_KEY && RESEND_FROM_EMAIL ? [{
+    {
       key: Modules.NOTIFICATION,
       resolve: '@medusajs/notification',
       options: {
         providers: [
+          // --- PROVEEDOR LOCAL (Para que no de error rojo) ---
+          {
+            resolve: '@medusajs/notification-local',
+            id: 'local-notification',
+            options: {
+              channels: ['email'],
+            },
+          },
+          // --- SENDGRID (Opcional, si tienes las keys) ---
           ...(SENDGRID_API_KEY && SENDGRID_FROM_EMAIL ? [{
             resolve: '@medusajs/notification-sendgrid',
             id: 'sendgrid',
@@ -109,6 +118,7 @@ const medusaConfig = {
               from: SENDGRID_FROM_EMAIL,
             }
           }] : []),
+          // --- RESEND (Opcional, si tienes las keys) ---
           ...(RESEND_API_KEY && RESEND_FROM_EMAIL ? [{
             resolve: './src/modules/email-notifications',
             id: 'resend',
@@ -120,7 +130,7 @@ const medusaConfig = {
           }] : []),
         ]
       }
-    }] : []),
+    },
     
     // 4. PAYMENT MODULE (MODIFICADO PARA INCLUIR MERCADOPAGO)
     {
