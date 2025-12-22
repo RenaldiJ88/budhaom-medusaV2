@@ -7,7 +7,8 @@ import {
   Logger, 
   WebhookActionResult 
 } from "@medusajs/framework/types";
-import { MercadoPagoConfig, Preference } from 'mercadopago';
+// AGREGAMOS 'Payment' AQUI EN LOS IMPORTS
+import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 
 type Options = {
   access_token: string;
@@ -36,11 +37,10 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
     this.logger_.info(`🔥 [MP-INIT] Iniciando pago...`);
     
-    // 1. OBTENER ID
     let resource_id = input.data?.session_id || input.id || input.resource_id;
     if (!resource_id) resource_id = `fallback_${Date.now()}`;
 
-    // 2. URLs SEGURAS
+    // REEMPLAZA ESTO CON TU URL REAL DE RAILWAY
     const STORE_DOMAIN = "https://storefront-production-6152.up.railway.app";
     const BACKEND_DOMAIN = "https://backend-production-a7f0.up.railway.app"; 
 
@@ -49,7 +49,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     const pendingUrl = `${STORE_DOMAIN}/ar/checkout?payment_status=pending`;
     const webhookUrl = `${BACKEND_DOMAIN}/hooks/mp`;
 
-    // 3. SANITIZAR ITEMS
     let itemsMp: any[] = [];
     const cartItems = input.context?.cart?.items || input.cart?.items;
 
@@ -61,7 +60,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             } else {
                 safePrice = Number(item.unit_price);
             }
-
             if (isNaN(safePrice) || safePrice <= 0) safePrice = 100;
 
             return {
@@ -99,8 +97,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     };
 
     try {
-        this.logger_.info(`📦 [MP-PAYLOAD] Items: ${JSON.stringify(itemsMp)}`);
-
         const preference = new Preference(this.mercadoPagoConfig);
         const response = await preference.create(preferenceData);
         
@@ -121,13 +117,41 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { return this.initiatePayment(input); }
-  
-  // --- CORRECCIÓN CRÍTICA AQUÍ ---
-  // Cambiamos AUTHORIZED a PENDING. Esto obliga a esperar el Webhook y no cierra la orden antes de tiempo.
+
+  // --- 🛠️ LA SOLUCIÓN ESTÁ AQUÍ ---
+  // Ahora "authorizePayment" no confía ciegamente, VERIFICA en MP.
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
+      const sessionData = input.session_data || {};
+      const resourceId = sessionData.resource_id;
+
+      // Si no tenemos ID, seguimos pendientes
+      if (!resourceId) {
+        return { status: PaymentSessionStatus.PENDING, data: sessionData };
+      }
+
+      try {
+        // Consultamos a Mercado Pago: "¿Existe un pago aprobado para este ID?"
+        const payment = new Payment(this.mercadoPagoConfig);
+        const searchResult = await payment.search({ options: { external_reference: resourceId }});
+        
+        // Buscamos si alguno de los resultados está APROBADO
+        const approvedPayment = searchResult.results?.find((p) => p.status === 'approved');
+
+        if (approvedPayment) {
+           this.logger_.info(`✅ [MP-AUTH] Pago verificado: ${approvedPayment.id}. Autorizando sesión.`);
+           return { 
+             status: PaymentSessionStatus.AUTHORIZED, 
+             data: { ...sessionData, mp_payment_id: approvedPayment.id } 
+           };
+        }
+      } catch (err) {
+         this.logger_.error(`⚠️ [MP-AUTH-CHECK] Error verificando estado: ${err}`);
+      }
+
+      // Si falló la verificación o no está aprobado aún, devolvemos PENDING
       return { 
           status: PaymentSessionStatus.PENDING, 
-          data: input.session_data || {} 
+          data: sessionData 
       }; 
   }
 
@@ -135,7 +159,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   async capturePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async deletePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   
-  // --- CORRECCIÓN CRÍTICA AQUÍ TAMBIÉN ---
+  // Mantenemos esto en PENDING por defecto, salvo que queramos hacer la misma verificación que arriba
   async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { 
       return { status: PaymentSessionStatus.PENDING }; 
   }
