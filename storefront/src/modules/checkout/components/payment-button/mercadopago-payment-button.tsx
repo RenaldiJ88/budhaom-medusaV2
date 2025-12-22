@@ -25,14 +25,15 @@ export const MercadoPagoPaymentButton = ({
   // Leemos el estado del pago desde la URL (lo que manda MP al volver)
   const paymentStatus = searchParams.get("payment_status")
 
-  // --- 1. LÓGICA DE RETORNO ---
+  // --- 1. LÓGICA DE RETORNO (CUANDO VUELVE DE MP) ---
   useEffect(() => {
-    // Si Mercado Pago nos devuelve con "success", intentamos cerrar la orden
-    if (paymentStatus === "success" && !submitting) {
+    // Si Mercado Pago nos devuelve con "success" (o approved en tu url), intentamos cerrar la orden
+    // Nota: Tu URL dice payment_status=approved, así que chequeamos ambos por seguridad
+    if ((paymentStatus === "success" || paymentStatus === "approved") && !submitting) {
       console.log("✅ [FRONTEND] Pago exitoso detectado en URL via Mercado Pago.")
       handleOrderCompletion()
     } 
-    // Si falló, mostramos error
+    // Si falló
     else if (paymentStatus === "failure") {
       setErrorMessage("El pago fue rechazado por Mercado Pago. Intenta nuevamente.")
     }
@@ -46,52 +47,52 @@ export const MercadoPagoPaymentButton = ({
     try {
       // Intentamos cerrar el carrito y crear la orden
       await placeOrder()
-      // Si tiene éxito, 'placeOrder' se encarga de redirigir a /order/confirmed/...
     } catch (err: any) {
       console.error("❌ [FRONTEND] Error al cerrar la orden:", err)
       
       const errorText = (err.message || "").toLowerCase();
 
       // --- MANEJO DE RACE CONDITION (Webhook vs Frontend) ---
-      // Si el error dice que el carrito "no existe", "ya fue completado" o da error 404/409,
-      // pero Mercado Pago nos dijo "success", asumimos que el Webhook ya creó la orden.
       if (
         errorText.includes("completed") || 
-        errorText.includes("found") || // "not found"
-        errorText.includes("exist") || // "does not exist"
+        errorText.includes("found") || 
+        errorText.includes("exist") || 
         errorText.includes("404") ||
         errorText.includes("409")
       ) {
          console.warn("⚠️ [FRONTEND] El Webhook ganó la carrera. Redirigiendo a órdenes...");
-         // Como placeOrder falló, no tenemos el ID de la orden nueva para ir a /order/confirmed/ID.
-         // Lo más seguro es mandar al usuario a su lista de órdenes.
          router.push("/account/orders");
          return;
       }
 
-      // Si es un error real (ej: tarjeta rechazada por Medusa), mostramos el mensaje.
       setErrorMessage(err.message || "Error al procesar la orden en Medusa.")
       setSubmitting(false)
     }
   }
 
-  // --- 2. LÓGICA DE IDA (IR A PAGAR) ---
+  // --- 2. LÓGICA DE IDA (IR A PAGAR) - CORREGIDA PARA MÓVIL ---
   const handlePayment = () => {
-    setSubmitting(true)
+    // ⚠️ CRÍTICO PARA MÓVILES: NO ejecutar setSubmitting(true) aquí arriba.
+    // Cualquier cambio de estado asíncrono antes del window.location 
+    // hará que Safari/Chrome Mobile bloquee la redirección.
+
     setErrorMessage(null)
 
     // Buscamos el link generado por el backend
-    // Priorizamos sandbox_init_point si estamos probando, o init_point normal
     const paymentLink = session?.data?.init_point || session?.data?.sandbox_init_point
 
-    if (paymentLink) {
-      console.log("🚀 [FRONTEND] Redirigiendo a Mercado Pago:", paymentLink)
-      window.location.href = paymentLink
-    } else {
+    if (!paymentLink) {
       console.error("❌ [FRONTEND] No se encontró link de pago en la sesión.")
       setErrorMessage("Error de conexión con Mercado Pago. Refresca la página.")
-      setSubmitting(false)
+      return;
     }
+
+    // 🚀 REDIRECCIÓN INMEDIATA
+    console.log("🚀 [FRONTEND] Redirigiendo a Mercado Pago:", paymentLink)
+    window.location.href = paymentLink
+    
+    // (Opcional) Podrías poner setSubmitting(true) aquí abajo si quieres que aparezca el spinner 
+    // mientras el navegador carga la nueva URL, pero lo ideal es dejarlo limpio.
   }
 
   // Renderizado
@@ -106,21 +107,19 @@ export const MercadoPagoPaymentButton = ({
         {submitting ? (
           <div className="flex items-center gap-2">
              <Spinner />
-             {paymentStatus === "success" ? "Finalizando compra..." : "Procesando..."}
+             {paymentStatus === "success" || paymentStatus === "approved" ? "Finalizando compra..." : "Redirigiendo..."}
           </div>
         ) : (
           "PAGAR CON MERCADO PAGO"
         )}
       </Button>
 
-      {/* Mensajes de error o estado */}
       {errorMessage && (
         <div className="text-red-600 text-sm mt-2 text-center bg-red-50 p-2 rounded border border-red-200">
           {errorMessage}
         </div>
       )}
       
-      {/* Aviso de debug si notReady es true */}
       {notReady && (
         <p className="text-xs text-orange-500 text-center">
           Completa los datos de envío para habilitar el pago.
