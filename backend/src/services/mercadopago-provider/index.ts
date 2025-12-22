@@ -12,6 +12,7 @@ import { MercadoPagoConfig, Preference } from 'mercadopago';
 type Options = {
   access_token: string;
   public_key?: string;
+  store_url?: string;
 };
 
 type SessionData = Record<string, unknown>;
@@ -33,109 +34,94 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    console.log("🔥 [MP-DEBUG] v10 - ESTRATEGIA COMODÍN 🃏");
+    this.logger_.info(`🔥 [MP-INIT] Iniciando...`);
+    
+    // 1. OBTENER ID (Sin lógica compleja para no romper)
+    // Usamos el ID de sesión (payses_) que sabemos que llega en input.data
+    let resource_id = input.data?.session_id || input.id || input.resource_id;
+
+    if (!resource_id) {
+        resource_id = `fallback_${Date.now()}`;
+        this.logger_.warn(`⚠️ [MP-WARN] No ID. Usando Fallback: ${resource_id}`);
+    } else {
+        this.logger_.info(`🛒 [MP-DEBUG] Enviando referencia a MP: ${resource_id}`);
+    }
+
+    // --- URLS ---
+    let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
+    if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
+    
+    const baseUrlStr = `${rawStoreUrl}/checkout`;
+    // Agregamos parámetros para que el usuario vea el resultado visualmente
+    const successUrl = `${baseUrlStr}?step=payment&payment_status=success`;
+    const failureUrl = `${baseUrlStr}?step=payment&payment_status=failure`;
+    const pendingUrl = `${baseUrlStr}?step=payment&payment_status=pending`;
+
+    // URL Webhook (Backend)
+    let backendDomain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000";
+    if (!backendDomain.startsWith("http")) backendDomain = `https://${backendDomain}`;
+    const cleanBackendUrl = backendDomain.endsWith("/") ? backendDomain.slice(0, -1) : backendDomain;
+    const webhookUrl = `${cleanBackendUrl}/hooks/mp`;
+
+    this.logger_.info(`🌐 [MP-DEBUG] Webhook URL: ${webhookUrl}`);
+
+    // --- PREFERENCIA ---
+    let amount = input.amount || input.context?.amount;
+    if (!amount) amount = 100;
+    const email = input.email || input.context?.email || "guest@budhaom.com";
+
+    const preferenceData = {
+      body: {
+        items: [
+          {
+            id: resource_id,
+            title: "Compra en BUDHA.Om",
+            quantity: 1,
+            unit_price: Number(amount),
+            currency_id: "ARS",
+          },
+        ],
+        payer: { email: email },
+        external_reference: resource_id, // Enviamos payses_...
+        notification_url: webhookUrl,
+        back_urls: { success: successUrl, failure: failureUrl, pending: pendingUrl },
+        auto_return: "approved",
+        metadata: { 
+            original_id: resource_id
+        }
+      },
+    };
 
     try {
-      // 1. URL Saneada
-      let storeUrl = process.env.STORE_URL || "http://localhost:8000";
-      if (!storeUrl.startsWith("http")) storeUrl = `http://${storeUrl}`;
-      if (!storeUrl.includes("/ar") && !storeUrl.includes("localhost")) {
-         if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
-         storeUrl = `${storeUrl}/ar`;
-      }
-      if (storeUrl.endsWith("/")) storeUrl = storeUrl.slice(0, -1);
+        const preference = new Preference(this.mercadoPagoConfig);
+        const response = await preference.create(preferenceData);
+        
+        if (!response.id) throw new Error("Mercado Pago no devolvió ID");
 
-      // --- 2. GENERACIÓN DE ID A PRUEBA DE BALAS ---
-      // Intentamos leer el ID. Si no existe, usamos el de la sesión.
-      // Si TAMPOCO existe, generamos uno aleatorio. ¡Nunca más undefined!
-      let resource_id = input.resource_id || input.context?.resource_id || input.id;
-
-      if (!resource_id) {
-        // Generamos un ID único temporal (ej: mp_gen_9a3f...)
-        const randomPart = Math.random().toString(36).substring(7);
-        resource_id = `mp_gen_${randomPart}`;
-        console.warn("⚠️ [MP-WARN] ID no detectado. Usando ID generado:", resource_id);
-      }
-
-      // 3. Monto (Validación estricta)
-      let amount = input.amount || input.context?.amount;
-      if (typeof amount === 'string') amount = parseFloat(amount);
-      if (!amount || isNaN(Number(amount))) amount = 1500; 
-
-      const email = input.email || input.context?.email || "guest@test.com";
-      const currency = input.currency_code || "ARS";
-
-      // 4. Preferencia MP
-      const preferenceData = {
-        body: {
-          items: [
-            {
-              id: resource_id,
-              title: "Compra Tienda",
-              quantity: 1,
-              unit_price: Number(amount),
-              currency_id: currency.toUpperCase(),
+        return {
+            id: response.id!,
+            data: {
+                id: response.id!,
+                init_point: response.init_point!, 
+                resource_id: resource_id 
             },
-          ],
-          payer: { email: email },
-          external_reference: resource_id,
-          back_urls: {
-            success: `${storeUrl}/checkout?step=payment&payment_status=success`,
-            failure: `${storeUrl}/checkout?step=payment&payment_status=failure`,
-            pending: `${storeUrl}/checkout?step=payment&payment_status=pending`,
-          },
-          auto_return: "approved",
-        },
-      };
-
-      const preference = new Preference(this.mercadoPagoConfig);
-      const response = await preference.create(preferenceData);
-
-      if (!response.id) throw new Error("MP no devolvió ID");
-
-      return {
-        id: response.id!,
-        data: {
-          id: response.id!,
-          init_point: response.init_point!, 
-          sandbox_init_point: response.sandbox_init_point!,
-          resource_id: resource_id // Guardamos el ID generado para usarlo después
-        },
-      };
-
+        };
     } catch (error: any) {
-      console.error("🔥 [MP-ERROR]", error);
-      throw error;
+        this.logger_.error(`🔥 [MP-ERROR]: ${error.message}`);
+        throw error;
     }
   }
 
-  // --- UPDATE: Recupera el ID generado antes ---
-  async updatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    // Si ya generamos un ID antes, lo volvemos a usar
-    const savedId = input.data?.resource_id;
-    if (savedId) {
-       console.log("♻️ [MP-INFO] Usando ID guardado:", savedId);
-       return this.initiatePayment({ ...input, resource_id: savedId });
-    }
-    // Si es una sesión zombie vieja, se generará uno nuevo en initiatePayment
-    return this.initiatePayment(input);
-  }
-
-  // --- BOILERPLATE ---
-  async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> {
-    return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} };
-  }
+  // Boilerplate standard
+  async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { return this.initiatePayment(input); }
+  async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} }; }
   async cancelPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async capturePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async deletePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
-  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { 
-    return { status: PaymentSessionStatus.AUTHORIZED }; 
-  }
+  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { return { status: PaymentSessionStatus.AUTHORIZED }; }
   async refundPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async retrievePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
-  async getWebhookActionAndData(input: any): Promise<WebhookActionResult> {
-    return { action: PaymentActions.NOT_SUPPORTED };
-  }
+  async getWebhookActionAndData(input: any): Promise<WebhookActionResult> { return { action: PaymentActions.NOT_SUPPORTED }; }
 }
 
 export default {
