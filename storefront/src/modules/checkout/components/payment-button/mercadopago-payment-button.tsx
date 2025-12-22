@@ -27,8 +27,7 @@ export const MercadoPagoPaymentButton = ({
 
   // --- 1. LÓGICA DE RETORNO (CUANDO VUELVE DE MP) ---
   useEffect(() => {
-    // Si Mercado Pago nos devuelve con "success" (o approved en tu url), intentamos cerrar la orden
-    // Nota: Tu URL dice payment_status=approved, así que chequeamos ambos por seguridad
+    // Si Mercado Pago nos devuelve con "success" (o approved), intentamos cerrar la orden
     if ((paymentStatus === "success" || paymentStatus === "approved") && !submitting) {
       console.log("✅ [FRONTEND] Pago exitoso detectado en URL via Mercado Pago.")
       handleOrderCompletion()
@@ -47,12 +46,13 @@ export const MercadoPagoPaymentButton = ({
     try {
       // Intentamos cerrar el carrito y crear la orden
       await placeOrder()
+      // Si tiene éxito, 'placeOrder' se encarga de redirigir.
     } catch (err: any) {
       console.error("❌ [FRONTEND] Error al cerrar la orden:", err)
       
       const errorText = (err.message || "").toLowerCase();
 
-      // --- MANEJO DE RACE CONDITION (Webhook vs Frontend) ---
+      // --- CASO 1: El Webhook ganó la carrera (La orden ya existe) ---
       if (
         errorText.includes("completed") || 
         errorText.includes("found") || 
@@ -65,17 +65,28 @@ export const MercadoPagoPaymentButton = ({
          return;
       }
 
+      // --- CASO 2: API lenta (Race Condition) ---
+      // Si la URL dice "approved" pero Medusa dice "Authorization failed",
+      // es porque la API de MP aún no actualizó el estado, pero el pago es real.
+      // Ignoramos el error y mandamos al usuario a su perfil.
+      if (
+        (paymentStatus === "success" || paymentStatus === "approved") &&
+        (errorText.includes("authorization") || errorText.includes("authorized"))
+      ) {
+          console.warn("⏳ [FRONTEND] Pago aprobado en URL pero pendiente en API. Delegando al Webhook.");
+          router.push("/account/orders");
+          return;
+      }
+
+      // Si es otro error real, lo mostramos
       setErrorMessage(err.message || "Error al procesar la orden en Medusa.")
       setSubmitting(false)
     }
   }
 
-  // --- 2. LÓGICA DE IDA (IR A PAGAR) - CORREGIDA PARA MÓVIL ---
+  // --- 2. LÓGICA DE IDA (IR A PAGAR) ---
   const handlePayment = () => {
-    // ⚠️ CRÍTICO PARA MÓVILES: NO ejecutar setSubmitting(true) aquí arriba.
-    // Cualquier cambio de estado asíncrono antes del window.location 
-    // hará que Safari/Chrome Mobile bloquee la redirección.
-
+    // ⚠️ CRÍTICO PARA MÓVILES: NO ejecutar setSubmitting(true) aquí.
     setErrorMessage(null)
 
     // Buscamos el link generado por el backend
@@ -90,9 +101,6 @@ export const MercadoPagoPaymentButton = ({
     // 🚀 REDIRECCIÓN INMEDIATA
     console.log("🚀 [FRONTEND] Redirigiendo a Mercado Pago:", paymentLink)
     window.location.href = paymentLink
-    
-    // (Opcional) Podrías poner setSubmitting(true) aquí abajo si quieres que aparezca el spinner 
-    // mientras el navegador carga la nueva URL, pero lo ideal es dejarlo limpio.
   }
 
   // Renderizado
