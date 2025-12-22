@@ -34,61 +34,59 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    this.logger_.info(`🔥 [MP-INIT] Iniciando proceso de pago...`);
+    this.logger_.info(`🔥 [MP-INIT] Iniciando pago...`);
     
     // 1. OBTENER ID
     let resource_id = input.data?.session_id || input.id || input.resource_id;
-    if (!resource_id) {
-        resource_id = `fallback_${Date.now()}`;
-    }
+    if (!resource_id) resource_id = `fallback_${Date.now()}`;
 
-    // 2. --- URLS HARDCODEADAS (SOLUCIÓN ERROR CELULAR) ---
-    // Ponemos tu URL de Railway directo para evitar errores de localhost
-    const HARDCODED_URL = "https://storefront-production-6152.up.railway.app";
-    
-    const successUrl = `${HARDCODED_URL}/ar/checkout?payment_status=approved`;
-    const failureUrl = `${HARDCODED_URL}/ar/checkout?payment_status=failure`;
-    const pendingUrl = `${HARDCODED_URL}/ar/checkout?payment_status=pending`;
+    // 2. URLs SEGURAS (Evitamos localhost para que el cel no falle)
+    // REEMPLAZA ESTO CON TU URL REAL DE RAILWAY SI ES DIFERENTE
+    const STORE_DOMAIN = "https://storefront-production-6152.up.railway.app";
+    const BACKEND_DOMAIN = "https://backend-production-a7f0.up.railway.app"; 
 
-    // URL Webhook (Backend)
-    // Asegúrate de que esta sea la URL de tu BACKEND en Railway
-    let backendUrl = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL;
-    if (!backendUrl) backendUrl = "https://backend-production-a7f0.up.railway.app"; // Pon tu URL de back real aquí si falla
-    if (!backendUrl.startsWith("http")) backendUrl = `https://${backendUrl}`;
-    const webhookUrl = `${backendUrl}/hooks/mp`;
+    const successUrl = `${STORE_DOMAIN}/ar/checkout?payment_status=approved`;
+    const failureUrl = `${STORE_DOMAIN}/ar/checkout?payment_status=failure`;
+    const pendingUrl = `${STORE_DOMAIN}/ar/checkout?payment_status=pending`;
+    const webhookUrl = `${BACKEND_DOMAIN}/hooks/mp`;
 
-    this.logger_.info(`🌐 [MP-DEBUG] URLs configuradas: Front: ${HARDCODED_URL} | Webhook: ${webhookUrl}`);
-
-    // 3. --- PREPARAR ITEMS ---
-    let amount = input.amount || input.context?.amount;
-    if (!amount) amount = 100;
-    
-    const email = input.email || input.context?.email || "guest@budhaom.com";
-
-    // Intentamos obtener los items reales del carrito si Medusa los envió en el contexto
+    // 3. SANITIZAR ITEMS (La parte clave para evitar PXB01)
     let itemsMp: any[] = [];
-
-    // Verificamos si hay items en el input (depende de la versión de Medusa)
     const cartItems = input.context?.cart?.items || input.cart?.items;
 
+    // Si hay items, los procesamos con cuidado quirúrgico
     if (cartItems && Array.isArray(cartItems) && cartItems.length > 0) {
-        this.logger_.info(`🛒 [MP-DEBUG] Enviando ${cartItems.length} items reales a MP`);
-        
-        itemsMp = cartItems.map((item: any) => ({
-            id: item.variant_id || item.id,
-            title: item.title,
-            description: item.description || item.title,
-            picture_url: item.thumbnail, // Esto hace que se vea la foto en la app
-            quantity: Number(item.quantity),
-            unit_price: Number(item.unit_price), // Medusa maneja unit_price igual que el total a veces
-            currency_id: "ARS"
-        }));
+        itemsMp = cartItems.map((item: any) => {
+            // TRUCO MEDUSA: A veces unit_price es un objeto { value: 1000 ... }
+            let safePrice = 0;
+            if (typeof item.unit_price === 'object' && item.unit_price !== null) {
+                // Si es objeto, intentamos leer .amount o .value
+                safePrice = Number(item.unit_price.amount || item.unit_price.value || 0);
+            } else {
+                safePrice = Number(item.unit_price);
+            }
+
+            // Si el precio es NaN o 0, ponemos 100 para evitar error PXB01
+            if (isNaN(safePrice) || safePrice <= 0) safePrice = 100;
+
+            return {
+                id: item.variant_id || item.id,
+                title: item.title || "Producto",
+                quantity: Number(item.quantity) || 1,
+                unit_price: safePrice, 
+                currency_id: "ARS",
+                // ¡IMPORTANTE! NO enviamos picture_url para evitar errores de carga en la app móvil
+                // picture_url: item.thumbnail 
+            };
+        });
     } else {
-        // Fallback: Si no hay info de items, mandamos el total genérico (Tu código anterior)
-        this.logger_.info(`⚠️ [MP-DEBUG] No se detectaron items individuales, enviando total genérico.`);
+        // Fallback si no hay items
+        let amount = input.amount || input.context?.amount || 100;
+        if (typeof amount === 'object') amount = Number(amount.amount || amount.value || 100);
+
         itemsMp = [{
             id: resource_id,
-            title: "Compra en BUDHA.Om",
+            title: "Compra en Tienda",
             quantity: 1,
             unit_price: Number(amount),
             currency_id: "ARS",
@@ -98,30 +96,25 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     const preferenceData = {
       body: {
         items: itemsMp,
-        payer: { email: email },
+        // Usamos un email genérico si no hay uno, para evitar conflicto de "Auto-compra"
+        payer: { email: input.email || "guest_payer@test.com" },
         external_reference: resource_id,
         notification_url: webhookUrl,
-        back_urls: { 
-            success: successUrl, 
-            failure: failureUrl, 
-            pending: pendingUrl 
-        },
+        back_urls: { success: successUrl, failure: failureUrl, pending: pendingUrl },
         auto_return: "approved",
-        // Evita que MP pida loguearse obligatoriamente a veces
-        binary_mode: true, 
-        metadata: { 
-            original_id: resource_id
-        }
+        binary_mode: true, // Esto fuerza a que el pago sea instantáneo (sí o no)
+        metadata: { original_id: resource_id }
       },
     };
 
     try {
+        // Logueamos lo que enviamos para debuguear si falla
+        this.logger_.info(`📦 [MP-PAYLOAD] Items: ${JSON.stringify(itemsMp)}`);
+
         const preference = new Preference(this.mercadoPagoConfig);
         const response = await preference.create(preferenceData);
         
         if (!response.id) throw new Error("Mercado Pago no devolvió ID");
-
-        this.logger_.info(`✅ [MP-SUCCESS] Preferencia creada: ${response.id}`);
 
         return {
             id: response.id!,
@@ -137,7 +130,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     }
   }
 
-  // Boilerplate standard
+  // Métodos obligatorios vacíos...
   async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { return this.initiatePayment(input); }
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} }; }
   async cancelPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
