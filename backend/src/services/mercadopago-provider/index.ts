@@ -43,10 +43,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     const STORE_DOMAIN = "https://storefront-production-6152.up.railway.app";
     const BACKEND_DOMAIN = "https://backend-production-a7f0.up.railway.app"; 
 
-    // --- CORRECCIÓN DE MONTO (EL PROBLEMA DE LOS $100) ---
-    // Medusa envía el monto total (input.amount) incluyendo envío e impuestos.
-    // Viene en centavos (ej: 200000 para $2000). Mercado Pago quiere unidades (2000).
-    
     let totalAmount = input.amount;
     
     // Si el monto no viene directo, lo buscamos en el contexto
@@ -54,19 +50,19 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         totalAmount = input.context.amount;
     }
 
-    // Validación de seguridad para no cobrar $0 o $100 por error
+    // Validación de seguridad
     if (!totalAmount || Number(totalAmount) <= 0) {
         this.logger_.error("⚠️ [MP-INIT] Error: Monto total es 0 o inválido.");
         throw new Error("El monto de la orden es inválido.");
     }
 
-    // Convertimos de centavos a unidades (Medusa usa 2 decimales para ARS)
-    const finalPrice = Number(totalAmount) / 100;
+    // --- CORRECCIÓN FINAL ---
+    // Como tu Medusa guarda "1000" para "$1000", NO dividimos por 100.
+    // Pasamos el número directo a Mercado Pago.
+    const finalPrice = Number(totalAmount);
 
-    this.logger_.info(`💰 [MP-INIT] Monto Medusa (centavos): ${totalAmount} -> MP (final): $${finalPrice}`);
+    this.logger_.info(`💰 [MP-INIT] Monto Medusa: ${totalAmount} -> MP (final): $${finalPrice}`);
 
-    // ENVIAMOS UN SOLO ITEM QUE REPRESENTA EL TOTAL
-    // Esto arregla el problema de "falta el envío" y el error de los $100.
     const itemsMp = [{
         id: resource_id,
         title: `Orden en Tienda (Ref: ${resource_id.slice(0, 8)})`,
@@ -113,7 +109,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         throw error;
     }
   }
-
   // ---------------------------------------------------------
   // 🛡️ SOLUCIÓN HÍBRIDA v2.3 (PLATINUM - 10/10)
   // ---------------------------------------------------------
