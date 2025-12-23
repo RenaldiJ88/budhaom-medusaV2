@@ -110,22 +110,22 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     }
   }
   // ---------------------------------------------------------
-  // 🛡️ SOLUCIÓN HÍBRIDA v2.3 (PLATINUM - 10/10)
+  // 🛡️ SOLUCIÓN HÍBRIDA v2.5 (FIX ESTRUCTURA DATA)
   // ---------------------------------------------------------
-  // ---------------------------------------------------------
-  // 🛡️ SOLUCIÓN HÍBRIDA v2.4 (FIX DE SEGURIDAD)
-  // ---------------------------------------------------------
-  async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
-    const sessionData = input.session_data || {};
-    
+  async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
+      
+    // LOG DE DEBUG: Para ver qué demonios está llegando si vuelve a fallar
+    this.logger_.info(`🔍 [MP-DEBUG] Data recibida: ${JSON.stringify(paymentSessionData)}`);
+
     // CORRECCIÓN CRÍTICA:
-    // Buscamos el ID en session_data. Si no está, usamos el ID de la sesión de Medusa (input.id).
-    // input.id suele ser "payses_XXXX", que es lo que usamos como external_reference.
-    const resourceId = sessionData.resource_id || input.id;
+    // En Medusa v2, el primer argumento YA ES la data. No busques .session_data dentro.
+    // Buscamos 'resource_id' (que guardamos en initiatePayment) o 'id' como fallback.
+    const resourceId = (paymentSessionData.resource_id || paymentSessionData.id) as string;
 
     if (!resourceId) {
-        this.logger_.error(`⛔ [MP-AUTH] Error Crítico: No se encontró ningún ID (ni resource_id ni input.id).`);
-        return { status: PaymentSessionStatus.ERROR, data: sessionData };
+        this.logger_.error(`⛔ [MP-AUTH] Error Crítico: ID no encontrado en la data.`);
+        // Si no tenemos ID, no podemos autorizar. Retornamos ERROR.
+        return { status: PaymentSessionStatus.ERROR, data: paymentSessionData };
     }
 
     this.logger_.info(`🕵️ [MP-AUTH] Analizando sesión: ${resourceId}`);
@@ -133,7 +133,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     try {
       const payment = new Payment(this.mercadoPagoConfig);
       
-      // 1. Buscamos el pago usando el ID como referencia externa
+      // 1. Buscamos el pago en MP
       const searchResult = await payment.search({ 
           options: { external_reference: resourceId }
       });
@@ -147,7 +147,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           this.logger_.warn(`⚠️ [MP-AUTH] Sin resultados en API (Delay MP). Asumiendo Webhook Optimista.`);
           return { 
               status: PaymentSessionStatus.AUTHORIZED, 
-              data: { ...sessionData, auth_via: "optimistic_empty_list" } 
+              data: { ...paymentSessionData, auth_via: "optimistic_empty_list" } 
           };
       }
 
@@ -164,7 +164,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
          this.logger_.info(`✅ [MP-AUTH] Pago CONFIRMADO: ${approvedPayment.id}`);
          return { 
            status: PaymentSessionStatus.AUTHORIZED, 
-           data: { ...sessionData, mp_payment_id: approvedPayment.id } 
+           data: { ...paymentSessionData, mp_payment_id: approvedPayment.id } 
          };
       }
 
@@ -176,25 +176,25 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           this.logger_.info(`⏳ [MP-AUTH] Pago PENDIENTE (Status: ${pendingPayment.status}). Esperando.`);
           return { 
               status: PaymentSessionStatus.PENDING, 
-              data: sessionData 
+              data: paymentSessionData 
           };
       }
 
-      // CASO 4: RECHAZADOS (Seguridad)
+      // CASO 4: RECHAZADOS
       const rejectedStates = results.map(p => p.status).join(', ');
-      this.logger_.warn(`⛔ [MP-AUTH] Intentos RECHAZADOS. Estados encontrados: [${rejectedStates}]`);
+      this.logger_.warn(`⛔ [MP-AUTH] Intentos RECHAZADOS. Estados: [${rejectedStates}]`);
       
       return { 
           status: PaymentSessionStatus.ERROR, 
-          data: sessionData 
+          data: paymentSessionData 
       };
 
     } catch (err) {
        // CASO 5: ERROR DE RED (Fallback)
-       this.logger_.error(`🔥 [MP-AUTH-CRASH] Error API: ${err}. Fallback de emergencia activado.`);
+       this.logger_.error(`🔥 [MP-AUTH-CRASH] Error API: ${err}. Fallback de emergencia.`);
        return { 
            status: PaymentSessionStatus.AUTHORIZED, 
-           data: { ...sessionData, auth_via: "emergency_fallback" } 
+           data: { ...paymentSessionData, auth_via: "emergency_fallback" } 
        };
     }
 }
