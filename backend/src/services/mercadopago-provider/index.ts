@@ -112,88 +112,92 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   // ---------------------------------------------------------
   // 🛡️ SOLUCIÓN HÍBRIDA v2.3 (PLATINUM - 10/10)
   // ---------------------------------------------------------
+  // ---------------------------------------------------------
+  // 🛡️ SOLUCIÓN HÍBRIDA v2.4 (FIX DE SEGURIDAD)
+  // ---------------------------------------------------------
   async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
-      const sessionData = input.session_data || {};
-      const resourceId = sessionData.resource_id;
+    const sessionData = input.session_data || {};
+    
+    // CORRECCIÓN CRÍTICA:
+    // Buscamos el ID en session_data. Si no está, usamos el ID de la sesión de Medusa (input.id).
+    // input.id suele ser "payses_XXXX", que es lo que usamos como external_reference.
+    const resourceId = sessionData.resource_id || input.id;
 
-      // SEGURIDAD EXTRA (Mejora Opcional Aplicada): 
-      // Si no tenemos ID, no tiene sentido buscar ni autorizar.
-      if (!resourceId) {
-          this.logger_.error(`⛔ [MP-AUTH] Error Crítico: resource_id no encontrado en la sesión.`);
-          return { status: PaymentSessionStatus.ERROR, data: sessionData };
+    if (!resourceId) {
+        this.logger_.error(`⛔ [MP-AUTH] Error Crítico: No se encontró ningún ID (ni resource_id ni input.id).`);
+        return { status: PaymentSessionStatus.ERROR, data: sessionData };
+    }
+
+    this.logger_.info(`🕵️ [MP-AUTH] Analizando sesión: ${resourceId}`);
+
+    try {
+      const payment = new Payment(this.mercadoPagoConfig);
+      
+      // 1. Buscamos el pago usando el ID como referencia externa
+      const searchResult = await payment.search({ 
+          options: { external_reference: resourceId }
+      });
+      
+      let results = searchResult.results || [];
+      
+      this.logger_.info(`📊 [MP-AUTH] Se encontraron ${results.length} intentos de pago para ${resourceId}.`);
+
+      // CASO 1: LISTA VACÍA (Bug de Lentitud de MP / Webhook rápido)
+      if (results.length === 0) {
+          this.logger_.warn(`⚠️ [MP-AUTH] Sin resultados en API (Delay MP). Asumiendo Webhook Optimista.`);
+          return { 
+              status: PaymentSessionStatus.AUTHORIZED, 
+              data: { ...sessionData, auth_via: "optimistic_empty_list" } 
+          };
       }
 
-      this.logger_.info(`🕵️ [MP-AUTH] Analizando sesión: ${resourceId}`);
+      // 2. ORDENAMIENTO SEGURO
+      results.sort((a, b) => {
+          const dateA = a.date_created ? new Date(a.date_created).getTime() : 0;
+          const dateB = b.date_created ? new Date(b.date_created).getTime() : 0;
+          return dateB - dateA;
+      });
 
-      try {
-        const payment = new Payment(this.mercadoPagoConfig);
-        
-        // 1. Buscamos SIN filtros de ordenamiento
-        const searchResult = await payment.search({ 
-            options: { external_reference: resourceId }
-        });
-        
-        let results = searchResult.results || [];
-        
-        this.logger_.info(`📊 [MP-AUTH] Se encontraron ${results.length} intentos de pago.`);
-
-        // CASO 1: LISTA VACÍA (Bug de Lentitud de MP / Race Condition)
-        if (results.length === 0) {
-            this.logger_.warn(`⚠️ [MP-AUTH] Sin resultados en API (Delay MP). Asumiendo Webhook Optimista.`);
-            return { 
-                status: PaymentSessionStatus.AUTHORIZED, 
-                data: { ...sessionData, auth_via: "optimistic_empty_list" } 
-            };
-        }
-
-        // 2. ORDENAMIENTO SEGURO
-        results.sort((a, b) => {
-            const dateA = a.date_created ? new Date(a.date_created).getTime() : 0;
-            const dateB = b.date_created ? new Date(b.date_created).getTime() : 0;
-            return dateB - dateA;
-        });
-
-        // CASO 2: BUSCAMOS ÉXITO (Prioridad Absoluta)
-        const approvedPayment = results.find((p) => p.status === 'approved');
-        if (approvedPayment) {
-           this.logger_.info(`✅ [MP-AUTH] Pago CONFIRMADO: ${approvedPayment.id}`);
-           return { 
-             status: PaymentSessionStatus.AUTHORIZED, 
-             data: { ...sessionData, mp_payment_id: approvedPayment.id } 
-           };
-        }
-
-        // CASO 3: BUSCAMOS PENDIENTES
-        const pendingPayment = results.find((p) => 
-            p.status === 'pending' || p.status === 'in_process' || p.status === 'authorized'
-        );
-        if (pendingPayment) {
-            this.logger_.info(`⏳ [MP-AUTH] Pago PENDIENTE (Status: ${pendingPayment.status}). Esperando.`);
-            return { 
-                status: PaymentSessionStatus.PENDING, 
-                data: sessionData 
-            };
-        }
-
-        // CASO 4: RECHAZADOS (Seguridad)
-        // Logueamos los estados para debug futuro si hace falta
-        const rejectedStates = results.map(p => p.status).join(', ');
-        this.logger_.warn(`⛔ [MP-AUTH] Intentos RECHAZADOS. Estados encontrados: [${rejectedStates}]`);
-        
-        return { 
-            status: PaymentSessionStatus.ERROR, 
-            data: sessionData 
-        };
-
-      } catch (err) {
-         // CASO 5: ERROR DE RED (Fallback de Emergencia)
-         this.logger_.error(`🔥 [MP-AUTH-CRASH] Error API: ${err}. Fallback de emergencia activado.`);
+      // CASO 2: BUSCAMOS ÉXITO (Prioridad Absoluta)
+      const approvedPayment = results.find((p) => p.status === 'approved');
+      if (approvedPayment) {
+         this.logger_.info(`✅ [MP-AUTH] Pago CONFIRMADO: ${approvedPayment.id}`);
          return { 
-             status: PaymentSessionStatus.AUTHORIZED, 
-             data: { ...sessionData, auth_via: "emergency_fallback" } 
+           status: PaymentSessionStatus.AUTHORIZED, 
+           data: { ...sessionData, mp_payment_id: approvedPayment.id } 
          };
       }
-  }
+
+      // CASO 3: BUSCAMOS PENDIENTES
+      const pendingPayment = results.find((p) => 
+          p.status === 'pending' || p.status === 'in_process' || p.status === 'authorized'
+      );
+      if (pendingPayment) {
+          this.logger_.info(`⏳ [MP-AUTH] Pago PENDIENTE (Status: ${pendingPayment.status}). Esperando.`);
+          return { 
+              status: PaymentSessionStatus.PENDING, 
+              data: sessionData 
+          };
+      }
+
+      // CASO 4: RECHAZADOS (Seguridad)
+      const rejectedStates = results.map(p => p.status).join(', ');
+      this.logger_.warn(`⛔ [MP-AUTH] Intentos RECHAZADOS. Estados encontrados: [${rejectedStates}]`);
+      
+      return { 
+          status: PaymentSessionStatus.ERROR, 
+          data: sessionData 
+      };
+
+    } catch (err) {
+       // CASO 5: ERROR DE RED (Fallback)
+       this.logger_.error(`🔥 [MP-AUTH-CRASH] Error API: ${err}. Fallback de emergencia activado.`);
+       return { 
+           status: PaymentSessionStatus.AUTHORIZED, 
+           data: { ...sessionData, auth_via: "emergency_fallback" } 
+       };
+    }
+}
 
   async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { 
       return { status: PaymentSessionStatus.AUTHORIZED }; 
