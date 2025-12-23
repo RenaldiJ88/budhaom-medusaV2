@@ -110,21 +110,25 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     }
   }
   // ---------------------------------------------------------
-  // 🛡️ SOLUCIÓN HÍBRIDA v2.5 (FIX ESTRUCTURA DATA)
+  // 🛡️ SOLUCIÓN HÍBRIDA v2.6 (FIX ESTRUCTURA ANIDADA)
   // ---------------------------------------------------------
   async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
       
-    // LOG DE DEBUG: Para ver qué demonios está llegando si vuelve a fallar
+    // LOG DE DEBUG: Mantenlo por seguridad un rato más
     this.logger_.info(`🔍 [MP-DEBUG] Data recibida: ${JSON.stringify(paymentSessionData)}`);
 
-    // CORRECCIÓN CRÍTICA:
-    // En Medusa v2, el primer argumento YA ES la data. No busques .session_data dentro.
-    // Buscamos 'resource_id' (que guardamos en initiatePayment) o 'id' como fallback.
-    const resourceId = (paymentSessionData.resource_id || paymentSessionData.id) as string;
+    // CORRECCIÓN FINAL: DESEMPAQUETADO INTELIGENTE
+    // El log nos mostró que la data viene anidada como { data: { resource_id: ... } }
+    // Así que buscamos en ambos niveles para asegurar compatibilidad total.
+    const inputData = paymentSessionData as any;
+    
+    const resourceId = inputData.resource_id || 
+                       inputData.data?.resource_id || 
+                       inputData.id || 
+                       inputData.data?.id;
 
     if (!resourceId) {
-        this.logger_.error(`⛔ [MP-AUTH] Error Crítico: ID no encontrado en la data.`);
-        // Si no tenemos ID, no podemos autorizar. Retornamos ERROR.
+        this.logger_.error(`⛔ [MP-AUTH] Error Crítico: ID no encontrado en niveles planos ni anidados.`);
         return { status: PaymentSessionStatus.ERROR, data: paymentSessionData };
     }
 
