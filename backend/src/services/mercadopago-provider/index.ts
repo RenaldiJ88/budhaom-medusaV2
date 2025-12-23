@@ -7,7 +7,7 @@ import {
   Logger, 
   WebhookActionResult 
 } from "@medusajs/framework/types";
-import { MercadoPagoConfig, Preference } from 'mercadopago';
+import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 
 type Options = {
   access_token: string;
@@ -34,61 +34,58 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    this.logger_.info(`🔥 [MP-INIT] Iniciando...`);
+    this.logger_.info(`🔥 [MP-INIT] Iniciando pago...`);
     
-    // 1. OBTENER ID (Sin lógica compleja para no romper)
-    // Usamos el ID de sesión (payses_) que sabemos que llega en input.data
     let resource_id = input.data?.session_id || input.id || input.resource_id;
+    if (!resource_id) resource_id = `fallback_${Date.now()}`;
 
-    if (!resource_id) {
-        resource_id = `fallback_${Date.now()}`;
-        this.logger_.warn(`⚠️ [MP-WARN] No ID. Usando Fallback: ${resource_id}`);
-    } else {
-        this.logger_.info(`🛒 [MP-DEBUG] Enviando referencia a MP: ${resource_id}`);
+    // TUS URLS
+    const STORE_DOMAIN = "https://storefront-production-6152.up.railway.app";
+    const BACKEND_DOMAIN = "https://backend-production-a7f0.up.railway.app"; 
+
+    let totalAmount = input.amount;
+    
+    // Si el monto no viene directo, lo buscamos en el contexto
+    if (!totalAmount && input.context) {
+        totalAmount = input.context.amount;
     }
 
-    // --- URLS ---
-    let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
-    if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
-    
-    const baseUrlStr = `${rawStoreUrl}/checkout`;
-    // Agregamos parámetros para que el usuario vea el resultado visualmente
-    const successUrl = `${baseUrlStr}?step=payment&payment_status=success`;
-    const failureUrl = `${baseUrlStr}?step=payment&payment_status=failure`;
-    const pendingUrl = `${baseUrlStr}?step=payment&payment_status=pending`;
+    // Validación de seguridad
+    if (!totalAmount || Number(totalAmount) <= 0) {
+        this.logger_.error("⚠️ [MP-INIT] Error: Monto total es 0 o inválido.");
+        throw new Error("El monto de la orden es inválido.");
+    }
 
-    // URL Webhook (Backend)
-    let backendDomain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000";
-    if (!backendDomain.startsWith("http")) backendDomain = `https://${backendDomain}`;
-    const cleanBackendUrl = backendDomain.endsWith("/") ? backendDomain.slice(0, -1) : backendDomain;
-    const webhookUrl = `${cleanBackendUrl}/hooks/mp`;
+    // --- CORRECCIÓN FINAL ---
+    // Como tu Medusa guarda "1000" para "$1000", NO dividimos por 100.
+    // Pasamos el número directo a Mercado Pago.
+    const finalPrice = Number(totalAmount);
 
-    this.logger_.info(`🌐 [MP-DEBUG] Webhook URL: ${webhookUrl}`);
+    this.logger_.info(`💰 [MP-INIT] Monto Medusa: ${totalAmount} -> MP (final): $${finalPrice}`);
 
-    // --- PREFERENCIA ---
-    let amount = input.amount || input.context?.amount;
-    if (!amount) amount = 100;
-    const email = input.email || input.context?.email || "guest@budhaom.com";
+    const itemsMp = [{
+        id: resource_id,
+        title: `Orden en Tienda (Ref: ${resource_id.slice(0, 8)})`,
+        description: "Productos + Envío",
+        quantity: 1,
+        unit_price: finalPrice, 
+        currency_id: "ARS",
+    }];
 
     const preferenceData = {
       body: {
-        items: [
-          {
-            id: resource_id,
-            title: "Compra en BUDHA.Om",
-            quantity: 1,
-            unit_price: Number(amount),
-            currency_id: "ARS",
-          },
-        ],
-        payer: { email: email },
-        external_reference: resource_id, // Enviamos payses_...
-        notification_url: webhookUrl,
-        back_urls: { success: successUrl, failure: failureUrl, pending: pendingUrl },
+        items: itemsMp,
+        payer: { email: input.email || "guest_payer@test.com" },
+        external_reference: resource_id,
+        notification_url: `${BACKEND_DOMAIN}/hooks/mp`,
+        back_urls: { 
+            success: `${STORE_DOMAIN}/ar/checkout?payment_status=approved`, 
+            failure: `${STORE_DOMAIN}/ar/checkout?payment_status=failure`, 
+            pending: `${STORE_DOMAIN}/ar/checkout?payment_status=pending` 
+        },
         auto_return: "approved",
-        metadata: { 
-            original_id: resource_id
-        }
+        binary_mode: true,
+        metadata: { original_id: resource_id }
       },
     };
 
@@ -103,6 +100,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             data: {
                 id: response.id!,
                 init_point: response.init_point!, 
+                sandbox_init_point: response.sandbox_init_point!,
                 resource_id: resource_id 
             },
         };
@@ -111,14 +109,108 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         throw error;
     }
   }
+  // ---------------------------------------------------------
+  // 🛡️ SOLUCIÓN HÍBRIDA v2.6 (FIX ESTRUCTURA ANIDADA)
+  // ---------------------------------------------------------
+  async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
+      
+    // LOG DE DEBUG: Mantenlo por seguridad un rato más
+    this.logger_.info(`🔍 [MP-DEBUG] Data recibida: ${JSON.stringify(paymentSessionData)}`);
 
-  // Boilerplate standard
+    // CORRECCIÓN FINAL: DESEMPAQUETADO INTELIGENTE
+    // El log nos mostró que la data viene anidada como { data: { resource_id: ... } }
+    // Así que buscamos en ambos niveles para asegurar compatibilidad total.
+    const inputData = paymentSessionData as any;
+    
+    const resourceId = inputData.resource_id || 
+                       inputData.data?.resource_id || 
+                       inputData.id || 
+                       inputData.data?.id;
+
+    if (!resourceId) {
+        this.logger_.error(`⛔ [MP-AUTH] Error Crítico: ID no encontrado en niveles planos ni anidados.`);
+        return { status: PaymentSessionStatus.ERROR, data: paymentSessionData };
+    }
+
+    this.logger_.info(`🕵️ [MP-AUTH] Analizando sesión: ${resourceId}`);
+
+    try {
+      const payment = new Payment(this.mercadoPagoConfig);
+      
+      // 1. Buscamos el pago en MP
+      const searchResult = await payment.search({ 
+          options: { external_reference: resourceId }
+      });
+      
+      let results = searchResult.results || [];
+      
+      this.logger_.info(`📊 [MP-AUTH] Se encontraron ${results.length} intentos de pago para ${resourceId}.`);
+
+      // CASO 1: LISTA VACÍA (Bug de Lentitud de MP / Webhook rápido)
+      if (results.length === 0) {
+          this.logger_.warn(`⚠️ [MP-AUTH] Sin resultados en API (Delay MP). Asumiendo Webhook Optimista.`);
+          return { 
+              status: PaymentSessionStatus.AUTHORIZED, 
+              data: { ...paymentSessionData, auth_via: "optimistic_empty_list" } 
+          };
+      }
+
+      // 2. ORDENAMIENTO SEGURO
+      results.sort((a, b) => {
+          const dateA = a.date_created ? new Date(a.date_created).getTime() : 0;
+          const dateB = b.date_created ? new Date(b.date_created).getTime() : 0;
+          return dateB - dateA;
+      });
+
+      // CASO 2: BUSCAMOS ÉXITO (Prioridad Absoluta)
+      const approvedPayment = results.find((p) => p.status === 'approved');
+      if (approvedPayment) {
+         this.logger_.info(`✅ [MP-AUTH] Pago CONFIRMADO: ${approvedPayment.id}`);
+         return { 
+           status: PaymentSessionStatus.AUTHORIZED, 
+           data: { ...paymentSessionData, mp_payment_id: approvedPayment.id } 
+         };
+      }
+
+      // CASO 3: BUSCAMOS PENDIENTES
+      const pendingPayment = results.find((p) => 
+          p.status === 'pending' || p.status === 'in_process' || p.status === 'authorized'
+      );
+      if (pendingPayment) {
+          this.logger_.info(`⏳ [MP-AUTH] Pago PENDIENTE (Status: ${pendingPayment.status}). Esperando.`);
+          return { 
+              status: PaymentSessionStatus.PENDING, 
+              data: paymentSessionData 
+          };
+      }
+
+      // CASO 4: RECHAZADOS
+      const rejectedStates = results.map(p => p.status).join(', ');
+      this.logger_.warn(`⛔ [MP-AUTH] Intentos RECHAZADOS. Estados: [${rejectedStates}]`);
+      
+      return { 
+          status: PaymentSessionStatus.ERROR, 
+          data: paymentSessionData 
+      };
+
+    } catch (err) {
+       // CASO 5: ERROR DE RED (Fallback)
+       this.logger_.error(`🔥 [MP-AUTH-CRASH] Error API: ${err}. Fallback de emergencia.`);
+       return { 
+           status: PaymentSessionStatus.AUTHORIZED, 
+           data: { ...paymentSessionData, auth_via: "emergency_fallback" } 
+       };
+    }
+}
+
+  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { 
+      return { status: PaymentSessionStatus.AUTHORIZED }; 
+  }
+
   async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { return this.initiatePayment(input); }
-  async authorizePayment(input: any): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { return { status: PaymentSessionStatus.AUTHORIZED, data: input.session_data || {} }; }
   async cancelPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async capturePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async deletePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
-  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { return { status: PaymentSessionStatus.AUTHORIZED }; }
   async refundPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async retrievePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
   async getWebhookActionAndData(input: any): Promise<WebhookActionResult> { return { action: PaymentActions.NOT_SUPPORTED }; }

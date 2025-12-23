@@ -8,95 +8,83 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
   try {
     const eventData = req.body as any;
-    const type = eventData.type;
-    const data = eventData.data;
-
-    if (type !== "payment") {
+    
+    // 1. Verificación básica del tipo de evento
+    if (eventData.type !== "payment") {
        res.status(200).send("Ignored");
        return; 
     }
 
-    const id = data?.id;
-    if (!id) {
+    const paymentId = eventData.data?.id;
+    if (!paymentId) {
        res.status(400).send("No ID found");
        return;
     }
 
+    // 2. Configuración e instanciación de MercadoPago
     const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
     if (!accessToken) {
-        logger.error("❌ ERROR: Falta MP_ACCESS_TOKEN");
-        res.status(500).send("Config Error");
+        logger.error("❌ Critical: MERCADOPAGO_ACCESS_TOKEN not configured.");
+        res.status(500).send("Server Configuration Error");
         return;
     }
 
     const client = new MercadoPagoConfig({ accessToken: accessToken });
     const payment = new Payment(client);
-    const paymentInfo = await payment.get({ id: id });
     
-    const status = paymentInfo.status;
-    const externalReference = paymentInfo.external_reference; 
+    // 3. Consultar estado real a MercadoPago (Seguridad)
+    const paymentInfo = await payment.get({ id: paymentId });
+    const { status, external_reference: externalReference } = paymentInfo;
 
-    logger.info(`🔍 ID: ${id} | Estado: ${status} | Ref: ${externalReference}`);
-
+    // Solo procesamos si está aprobado y tiene referencia de Medusa (payses_...)
     if (status === 'approved' && externalReference) {
+        
+        logger.info(`💳 Procesando pago aprobado MP: ${paymentId}`);
+
         const query = req.scope.resolve(ContainerRegistrationKeys.QUERY);
         
-        logger.info("🕵️ Buscando el camino desde la Sesión hasta el Carrito...");
-
-        // --- ESTRATEGIA UNIFICADA V2 ---
-        // En lugar de ir paso a paso, pedimos la ruta completa.
-        // La clave es "payment_collection.cart.id"
-        // Esto le dice a Medusa: "Usa los Links para traerme el ID del carrito conectado"
+        // 4. Búsqueda Relacional (Graph Query) - LA LÓGICA CLAVE
+        // Buscamos el Cart ID navegando los links: Session -> Collection -> Cart
         const { data: sessions } = await query.graph({
             entity: "payment_session",
             fields: [
-                "id", 
-                "payment_collection.id",
-                "payment_collection.cart.id" // <--- LA CLAVE MÁGICA
+                "payment_collection.cart.id"
             ],
             filters: {
                 id: externalReference
             }
         });
 
-        // Verificamos qué encontramos para poder depurar si falla
-        const session = sessions[0];
-        const paymentCollection = session?.payment_collection;
-        const cart = paymentCollection?.cart;
-        const cartId = cart?.id;
+        const cartId = sessions[0]?.payment_collection?.cart?.id;
 
         if (cartId) {
-            logger.info(`🛒 Cart ID encontrado: ${cartId}. Ejecutando Workflow...`);
-            
             try {
-                // --- COMPLETAR EL CARRITO ---
+                // 5. Ejecutar Workflow para crear la Orden
                 const { result } = await completeCartWorkflow(req.scope)
                     .run({
                         input: { id: cartId }
                     });
 
-                logger.info(`🎉 ¡ORDEN CREADA EXITOSAMENTE! ID: ${result.id}`);
+                logger.info(`✅ Orden creada exitosamente en Medusa: ${result.id}`);
             } catch (workflowError) {
                 const msg = (workflowError as any).message || "";
+                // Si el error dice "completed", es idempotencia (ya se creó antes), no es error real.
                 if (msg.includes("completed")) {
-                    logger.info("✅ La orden ya estaba creada.");
+                    logger.info("ℹ️ La orden ya había sido procesada anteriormente.");
                 } else {
-                    logger.error(`⚠️ Error en Workflow: ${msg}`);
+                    logger.error(`⚠️ Error al completar el carrito: ${msg}`);
                 }
             }
         } else {
-            // Logs detallados para saber dónde se rompió la cadena
-            logger.error("❌ No se pudo resolver el Cart ID.");
-            logger.info(`   - Sesión encontrada: ${!!session}`);
-            logger.info(`   - Collection encontrada: ${!!paymentCollection} (${paymentCollection?.id})`);
-            logger.info(`   - Cart objeto encontrado: ${!!cart}`);
+            logger.warn(`⚠️ No se encontró Cart ID asociado a la sesión ${externalReference}`);
         }
     }
 
+    // Siempre responder 200 a MP para confirmar recepción
     res.status(200).send("OK");
 
   } catch (error) {
-    logger.error(`Error Webhook: ${(error as any).message}`);
+    logger.error(`❌ Error general en Webhook MP: ${(error as any).message}`);
     res.status(200).send("Error processed"); 
   }
 }
