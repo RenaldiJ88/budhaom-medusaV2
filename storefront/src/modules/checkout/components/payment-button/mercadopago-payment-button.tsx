@@ -33,18 +33,21 @@ export const MercadoPagoPaymentButton = ({
       console.log("✅ [FRONTEND] Pago aprobado. Delegando creación de orden al Webhook.")
       setSubmitting(true)
       
-      // Esperamos 2 segundos de cortesía para dar tiempo al Webhook y redirigimos
-      setTimeout(() => {
+      // Esperamos 1.5 segundos de cortesía para dar tiempo al Webhook y redirigimos
+      const timer = setTimeout(() => {
         router.push("/account/orders")
       }, 1500)
+
+      return () => clearTimeout(timer)
     } 
     else if (paymentStatus === "failure") {
       setErrorMessage("El pago fue rechazado por Mercado Pago. Intenta nuevamente.")
+      setSubmitting(false)
     }
-  }, [paymentStatus])
+  }, [paymentStatus, router, submitting])
 
-  // Esta función solo se usa si falla algo y el usuario reintenta manual, 
-  // NO se usa en el retorno automático exitoso.
+  // Esta función se mantiene por si en el futuro quieres manejar reintentos manuales,
+  // pero NO se ejecuta automáticamente en el flujo exitoso para evitar choques con el Webhook.
   const handleOrderCompletion = async () => {
     setSubmitting(true)
     setErrorMessage(null)
@@ -77,6 +80,8 @@ export const MercadoPagoPaymentButton = ({
     }
 
     console.log("🚀 Redirigiendo a:", paymentLink)
+    
+    // Redirección directa sin estados intermedios para asegurar compatibilidad móvil
     window.location.href = paymentLink
   }
 
