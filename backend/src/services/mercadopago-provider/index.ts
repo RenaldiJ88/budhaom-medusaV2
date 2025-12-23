@@ -35,43 +35,46 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
 
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
     this.logger_.info(`🔥 [MP-INIT] Iniciando pago...`);
-    let resource_id = input.data?.session_id || input.id || input.resource_id || `fallback_${Date.now()}`;
     
+    let resource_id = input.data?.session_id || input.id || input.resource_id;
+    if (!resource_id) resource_id = `fallback_${Date.now()}`;
+
     // TUS URLS
     const STORE_DOMAIN = "https://storefront-production-6152.up.railway.app";
     const BACKEND_DOMAIN = "https://backend-production-a7f0.up.railway.app"; 
 
-    // Lógica de Items
-    let itemsMp: any[] = [];
-    const cartItems = input.context?.cart?.items || input.cart?.items;
+    // --- CORRECCIÓN DE MONTO (EL PROBLEMA DE LOS $100) ---
+    // Medusa envía el monto total (input.amount) incluyendo envío e impuestos.
+    // Viene en centavos (ej: 200000 para $2000). Mercado Pago quiere unidades (2000).
     
-    if (cartItems && Array.isArray(cartItems) && cartItems.length > 0) {
-        itemsMp = cartItems.map((item: any) => {
-            let safePrice = 0;
-            if (typeof item.unit_price === 'object' && item.unit_price !== null) {
-                safePrice = Number(item.unit_price.amount || item.unit_price.value || 0);
-            } else {
-                safePrice = Number(item.unit_price);
-            }
-            if (isNaN(safePrice) || safePrice <= 0) safePrice = 100;
-
-            return {
-                id: item.variant_id || item.id,
-                title: item.title || "Producto",
-                quantity: Number(item.quantity) || 1,
-                unit_price: safePrice, 
-                currency_id: "ARS",
-            };
-        });
-    } else {
-        itemsMp = [{
-            id: resource_id,
-            title: "Compra en Tienda",
-            quantity: 1,
-            unit_price: 100,
-            currency_id: "ARS",
-        }];
+    let totalAmount = input.amount;
+    
+    // Si el monto no viene directo, lo buscamos en el contexto
+    if (!totalAmount && input.context) {
+        totalAmount = input.context.amount;
     }
+
+    // Validación de seguridad para no cobrar $0 o $100 por error
+    if (!totalAmount || Number(totalAmount) <= 0) {
+        this.logger_.error("⚠️ [MP-INIT] Error: Monto total es 0 o inválido.");
+        throw new Error("El monto de la orden es inválido.");
+    }
+
+    // Convertimos de centavos a unidades (Medusa usa 2 decimales para ARS)
+    const finalPrice = Number(totalAmount) / 100;
+
+    this.logger_.info(`💰 [MP-INIT] Monto Medusa (centavos): ${totalAmount} -> MP (final): $${finalPrice}`);
+
+    // ENVIAMOS UN SOLO ITEM QUE REPRESENTA EL TOTAL
+    // Esto arregla el problema de "falta el envío" y el error de los $100.
+    const itemsMp = [{
+        id: resource_id,
+        title: `Orden en Tienda (Ref: ${resource_id.slice(0, 8)})`,
+        description: "Productos + Envío",
+        quantity: 1,
+        unit_price: finalPrice, 
+        currency_id: "ARS",
+    }];
 
     const preferenceData = {
       body: {
@@ -93,6 +96,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     try {
         const preference = new Preference(this.mercadoPagoConfig);
         const response = await preference.create(preferenceData);
+        
         if (!response.id) throw new Error("Mercado Pago no devolvió ID");
 
         return {
