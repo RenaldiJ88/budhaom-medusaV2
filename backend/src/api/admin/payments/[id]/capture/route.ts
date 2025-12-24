@@ -1,124 +1,70 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http";
-import { ContainerRegistrationKeys } from "@medusajs/utils";
+import { capturePaymentWorkflow } from "@medusajs/medusa/core-flows"; // ✅ ESTO ES LO CORRECTO
 
-interface CapturePaymentPayload {
-  amount: number;
-}
+// 1. Definimos la interfaz para lo que manda el Frontend
+type AdminCaptureBody = {
+  amount: number | string; // Aceptamos string o number para ser flexibles
+};
 
 export async function POST(
   req: MedusaRequest,
   res: MedusaResponse
 ): Promise<void> {
   try {
+    // Obtenemos el ID del pago de la URL
     const { id: paymentId } = req.params;
-    const { amount } = req.body as CapturePaymentPayload;
+    
+    // Validamos que exista body
+    if (!req.body) {
+      res.status(400).json({ error: "No body provided" });
+      return;
+    }
+
+    // 2. Casting y limpieza del monto
+    const body = req.body as AdminCaptureBody;
+    const amountToCapture = Number(body.amount);
+
+    console.log(`🔍 [ADMIN-CAPTURE] Iniciando captura para Pago ID: ${paymentId}`);
+    console.log(`💰 [ADMIN-CAPTURE] Monto solicitado: ${amountToCapture}`);
 
     if (!paymentId) {
       res.status(400).json({ error: "Payment ID is required" });
       return;
     }
 
-    if (!amount || Number(amount) <= 0) {
-      res.status(400).json({ error: "Valid amount is required" });
+    if (isNaN(amountToCapture) || amountToCapture <= 0) {
+      res.status(400).json({ error: `Monto inválido recibido: ${body.amount}` });
       return;
     }
 
-    const captureAmount = Number(amount);
-    const logger = req.scope.resolve(ContainerRegistrationKeys.LOGGER);
-
-    const query = req.scope.resolve(ContainerRegistrationKeys.QUERY);
-    
-    const { data: payments } = await query.graph({
-      entity: "payment",
-      fields: [
-        "id",
-        "amount",
-        "currency_code",
-        "payment_session.id",
-        "payment_session.provider_id",
-        "payment_session.data"
-      ],
-      filters: {
-        id: paymentId
-      }
+    // 3. EJECUCIÓN DEL WORKFLOW DE MEDUSA V2
+    // Usamos el workflow oficial para asegurar que se actualice la Orden y el Pago en la BD
+    const { result, errors } = await capturePaymentWorkflow.run({
+      container: req.scope, // 👈 IMPORTANTE: Aquí se pasa el contexto
+      input: {
+        payment_id: paymentId,
+        amount: amountToCapture,
+      },
+      throwOnError: true, // Esto hace que si falla, salte al catch de abajo
     });
 
-    if (!payments || payments.length === 0) {
-      res.status(404).json({ error: "Payment not found" });
-      return;
-    }
-
-    const payment = payments[0];
-    const paymentSession = payment.payment_session;
-
-    if (!paymentSession) {
-      res.status(400).json({ error: "Payment session not found" });
-      return;
-    }
-
-    const providerId = paymentSession.provider_id;
-    if (!providerId?.includes("mercadopago")) {
-      res.status(400).json({ 
-        error: "This endpoint only supports MercadoPago payments" 
-      });
-      return;
-    }
-
-    if (captureAmount > payment.amount) {
-      res.status(400).json({ 
-        error: `Capture amount (${captureAmount}) exceeds authorized amount (${payment.amount})` 
-      });
-      return;
-    }
-
-    let cleanProviderId = providerId;
-    if (providerId.startsWith("pp_")) {
-      cleanProviderId = providerId.replace(/^pp_/, "");
-    }
-    if (cleanProviderId.endsWith("_mercadopago") && cleanProviderId !== "mercadopago") {
-      cleanProviderId = "mercadopago";
-    }
-
-    let provider;
-    try {
-      provider = req.scope.resolve(cleanProviderId);
-    } catch (err) {
-      try {
-        provider = req.scope.resolve(providerId);
-      } catch (err2) {
-        logger.error(`Failed to resolve provider: ${cleanProviderId} or ${providerId}`);
-        res.status(500).json({ error: "Payment provider not found" });
-        return;
-      }
-    }
-
-    if (!provider || typeof provider.capturePayment !== "function") {
-      res.status(500).json({ error: "Payment provider does not support capture" });
-      return;
-    }
-
-    const captureInput = {
-      session_data: paymentSession.data || {},
-      amount: captureAmount
-    };
-
-    const result = await provider.capturePayment(captureInput);
-
-    logger.info(`✅ [ADMIN-CAPTURE] Payment ${paymentId} captured: $${captureAmount}`);
+    console.log("✅ [ADMIN-CAPTURE] Captura exitosa. Resultado:", result);
 
     res.json({
       success: true,
-      data: result,
-      captured_amount: captureAmount
+      captured_payment: result,
+      message: "Pago capturado correctamente"
     });
 
   } catch (error: any) {
-    const logger = req.scope.resolve(ContainerRegistrationKeys.LOGGER);
-    logger.error(`🔥 [ADMIN-CAPTURE-ERROR]: ${error.message}`);
+    console.error("🔥 [ADMIN-CAPTURE] Error crítico:", error);
+     
+    // Intentamos sacar el mensaje de error más limpio posible
+    const errorMessage = error.message || "Error desconocido al procesar la captura";
     
     res.status(500).json({ 
-      error: error.message || "Failed to capture payment" 
+      error: errorMessage,
+      details: error.stack 
     });
   }
 }
-
