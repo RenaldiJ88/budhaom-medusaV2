@@ -34,10 +34,15 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // ---------------------------------------------------------
-  // 1. INICIAR PAGO (Crea la Preferencia)
+  // 1. INICIAR PAGO
   // ---------------------------------------------------------
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    this.logger_.info(`🔥 [MP-INIT] Iniciando pago...`);
+    // Si ya existe una sesión y tiene ID, la reutilizamos para no crear preferencias infinitas
+    if (input.data?.id) {
+        return { id: input.data.id, data: input.data };
+    }
+
+    this.logger_.info(`🔥 [MP-INIT] Iniciando nueva preferencia...`);
     
     let resource_id = input.data?.session_id || input.id || input.resource_id;
     if (!resource_id) resource_id = `fallback_${Date.now()}`;
@@ -51,17 +56,15 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     }
 
     if (!totalAmount || Number(totalAmount) <= 0) {
-        this.logger_.error("⚠️ [MP-INIT] Error: Monto total es 0 o inválido.");
         throw new Error("El monto de la orden es inválido.");
     }
 
     const finalPrice = Number(totalAmount);
-    this.logger_.info(`💰 [MP-INIT] Monto final: $${finalPrice}`);
 
     const itemsMp = [{
         id: resource_id,
-        title: "Compra en Mi Tienda", 
-        description: "Detalle de la orden",
+        title: "Compra en Tienda", 
+        description: "Procesamiento de pedido",
         quantity: 1,
         unit_price: finalPrice, 
         currency_id: "ARS",
@@ -70,7 +73,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     const preferenceData = {
       body: {
         items: itemsMp,
-        payer: { email: input.email || "guest_payer@test.com" },
+        payer: { email: input.email || "guest@example.com" },
         external_reference: resource_id,
         notification_url: `${BACKEND_DOMAIN}/hooks/mp`,
         back_urls: { 
@@ -106,11 +109,9 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // ---------------------------------------------------------
-  // 2. AUTORIZAR PAGO (Verifica el estado)
+  // 2. AUTORIZAR PAGO (CORRECCIÓN CRÍTICA APLICADA ✅)
   // ---------------------------------------------------------
   async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
-    this.logger_.info(`🔍 [MP-AUTH] Verificando estado...`);
-
     const inputData = paymentSessionData as any;
     const resourceId = inputData.resource_id || inputData.data?.resource_id || inputData.id;
 
@@ -128,15 +129,23 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           return { status: PaymentSessionStatus.AUTHORIZED, data: { ...paymentSessionData, auth_via: "optimistic" } };
       }
 
-      // Ordenar por más reciente
+      // Ordenar por fecha descendente
       results.sort((a, b) => (new Date(b.date_created!).getTime() - new Date(a.date_created!).getTime()));
 
       const approvedPayment = results.find((p) => p.status === 'approved');
+      
       if (approvedPayment) {
-         this.logger_.info(`✅ [MP-AUTH] Pago CONFIRMADO: ${approvedPayment.id}`);
+         this.logger_.info(`✅ [MP-AUTH] Aprobado: ${approvedPayment.id} | Monto: ${approvedPayment.transaction_amount}`);
+         
          return { 
            status: PaymentSessionStatus.AUTHORIZED, 
-           data: { ...paymentSessionData, mp_payment_id: approvedPayment.id } 
+           data: { 
+               ...paymentSessionData, 
+               mp_payment_id: approvedPayment.id,
+               // ⭐ GUARDAMOS EL MONTO AQUÍ (CORRECCIÓN DE CURSOR)
+               transaction_amount: approvedPayment.transaction_amount,
+               currency_id: approvedPayment.currency_id
+           } 
          };
       }
 
@@ -148,78 +157,85 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       return { status: PaymentSessionStatus.ERROR, data: paymentSessionData };
 
     } catch (err) {
-       this.logger_.error(`🔥 [MP-AUTH] Fallback error: ${err}`);
+       this.logger_.error(`🔥 [MP-AUTH] Error: ${err}`);
        return { status: PaymentSessionStatus.AUTHORIZED, data: { ...paymentSessionData, auth_via: "fallback" } };
     }
   }
 
   // ---------------------------------------------------------
-  // 3. CAPTURA (AHORA REAL ✅)
+  // 3. CAPTURA (CORRECCIÓN CRÍTICA APLICADA ✅)
   // ---------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
-      const amount = input.amount;
-
-      this.logger_.info(`⚡ [MP-CAPTURE] Confirmando captura manual por: $${amount}`);
-
-      // En Mercado Pago "Standard", el pago suele capturarse automáticamente al aprobarse.
-      // Aquí simplemente CONFIRMAMOS a Medusa que el dinero está listo.
-      // Retornar el amount es CLAVE para que Medusa sepa cuánto se puede reembolsar.
       
+      // 1. Intentamos leer el amount que viene del input
+      let amountToCapture = input.amount;
+
+      // 2. ⭐ FALLBACK: Si es undefined, usamos el que guardamos en authorizePayment
+      if (!amountToCapture && sessionData.transaction_amount) {
+          this.logger_.warn(`⚠️ [MP-CAPTURE] Input amount undefined. Usando fallback de sesión: $${sessionData.transaction_amount}`);
+          amountToCapture = sessionData.transaction_amount;
+      }
+
+      // Validación final
+      if (!amountToCapture) {
+          this.logger_.error(`⛔ [MP-CAPTURE] ERROR: No hay monto disponible para capturar.`);
+          throw new Error("No se puede capturar: monto desconocido.");
+      }
+
+      this.logger_.info(`⚡ [MP-CAPTURE] Capturando: $${amountToCapture}`);
+
       return {
           ...sessionData,
           status: 'captured',
-          amount_captured: amount 
+          amount_captured: Number(amountToCapture) // Esto actualiza el balance en Medusa
       }; 
   }
 
   // ---------------------------------------------------------
-  // 4. CANCELAR (AHORA REAL ✅)
+  // 4. CANCELAR
   // ---------------------------------------------------------
   async cancelPayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
       const paymentId = sessionData.mp_payment_id;
 
-      this.logger_.info(`🚫 [MP-CANCEL] Cancelando pago... ID: ${paymentId || 'No ID'}`);
-
       if (paymentId) {
           try {
               const payment = new Payment(this.mercadoPagoConfig);
               await payment.cancel({ id: paymentId as string });
-              this.logger_.info(`✅ [MP-CANCEL] Cancelado en MP exitosamente.`);
+              this.logger_.info(`✅ [MP-CANCEL] Pago ${paymentId} cancelado.`);
           } catch (error) {
-              this.logger_.warn(`⚠️ [MP-CANCEL] No se pudo cancelar en MP (quizás ya expiró): ${error}`);
+              this.logger_.warn(`⚠️ [MP-CANCEL] Error al cancelar en MP: ${error}`);
           }
       }
-
       return sessionData; 
   }
 
   // ---------------------------------------------------------
-  // 5. REEMBOLSOS (YA CORREGIDO ✅)
+  // 5. REEMBOLSOS (REFUNDS)
   // ---------------------------------------------------------
   async refundPayment(input: any): Promise<SessionData> { 
     const sessionData = input.session_data || input.data || {};
     const refundAmount = input.amount;
     const paymentId = sessionData.mp_payment_id;
 
-    this.logger_.info(`💸 [MP-REFUND] Iniciando reembolso: ${paymentId} por $${refundAmount}`);
+    this.logger_.info(`💸 [MP-REFUND] Intentando reembolsar $${refundAmount} ID: ${paymentId}`);
 
     if (!paymentId) {
-        throw new Error("No se puede reembolsar: Falta ID de Mercado Pago.");
+        throw new Error("Falta ID de Mercado Pago para reembolsar.");
     }
 
     try {
         const refund = new PaymentRefund(this.mercadoPagoConfig);
         const finalRefundAmount = Number(refundAmount);
 
-        // FIX: payment_id fuera del body
+        // Recordar: payment_id va como primer argumento, body como segundo
         const response = await refund.create({
             payment_id: paymentId as string, 
             body: { amount: finalRefundAmount }
         });
 
-        this.logger_.info(`✅ [MP-REFUND] Éxito. ID: ${response.id}`);
+        this.logger_.info(`✅ [MP-REFUND] Exitoso. Refund ID: ${response.id}`);
 
         return {
             ...sessionData,
@@ -233,29 +249,11 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     }
   }
 
-  // ---------------------------------------------------------
-  // 6. ELIMINAR Y OTROS
-  // ---------------------------------------------------------
-  async deletePayment(input: any): Promise<SessionData> { 
-      return this.cancelPayment(input); // Reutilizamos cancelar
-  }
-
-  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { 
-      return { status: PaymentSessionStatus.AUTHORIZED }; 
-  }
-
-  async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { 
-      // Si el carrito cambia, iniciamos una nueva preferencia
-      return this.initiatePayment(input); 
-  }
-
-  async retrievePayment(input: any): Promise<SessionData> { 
-      return input.session_data || {}; 
-  }
-
-  async getWebhookActionAndData(input: any): Promise<WebhookActionResult> { 
-      return { action: PaymentActions.NOT_SUPPORTED }; 
-  }
+  async deletePayment(input: any): Promise<SessionData> { return this.cancelPayment(input); }
+  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { return { status: PaymentSessionStatus.AUTHORIZED }; }
+  async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { return this.initiatePayment(input); }
+  async retrievePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
+  async getWebhookActionAndData(input: any): Promise<WebhookActionResult> { return { action: PaymentActions.NOT_SUPPORTED }; }
 }
 
 export default {
