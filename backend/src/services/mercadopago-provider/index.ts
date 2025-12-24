@@ -33,6 +33,9 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     });
   }
 
+  // ---------------------------------------------------------
+  // 1. INICIAR PAGO (Crea la Preferencia)
+  // ---------------------------------------------------------
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
     this.logger_.info(`🔥 [MP-INIT] Iniciando pago...`);
     
@@ -43,7 +46,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     const BACKEND_DOMAIN = process.env.BACKEND_URL || "http://localhost:9000";
 
     let totalAmount = input.amount;
-    
     if (!totalAmount && input.context) {
         totalAmount = input.context.amount;
     }
@@ -54,7 +56,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     }
 
     const finalPrice = Number(totalAmount);
-
     this.logger_.info(`💰 [MP-INIT] Monto final: $${finalPrice}`);
 
     const itemsMp = [{
@@ -105,50 +106,30 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // ---------------------------------------------------------
-  // 🛡️ SOLUCIÓN HÍBRIDA v2.6
+  // 2. AUTORIZAR PAGO (Verifica el estado)
   // ---------------------------------------------------------
   async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
-      
-    this.logger_.info(`🔍 [MP-DEBUG] Data recibida: ${JSON.stringify(paymentSessionData)}`);
+    this.logger_.info(`🔍 [MP-AUTH] Verificando estado...`);
 
     const inputData = paymentSessionData as any;
-    
-    const resourceId = inputData.resource_id || 
-                       inputData.data?.resource_id || 
-                       inputData.id || 
-                       inputData.data?.id;
+    const resourceId = inputData.resource_id || inputData.data?.resource_id || inputData.id;
 
     if (!resourceId) {
-        this.logger_.error(`⛔ [MP-AUTH] Error Crítico: ID no encontrado en niveles planos ni anidados.`);
         return { status: PaymentSessionStatus.ERROR, data: paymentSessionData };
     }
 
-    this.logger_.info(`🕵️ [MP-AUTH] Analizando sesión: ${resourceId}`);
-
     try {
       const payment = new Payment(this.mercadoPagoConfig);
-      
-      const searchResult = await payment.search({ 
-          options: { external_reference: resourceId }
-      });
+      const searchResult = await payment.search({ options: { external_reference: resourceId }});
       
       let results = searchResult.results || [];
-      
-      this.logger_.info(`📊 [MP-AUTH] Se encontraron ${results.length} intentos de pago para ${resourceId}.`);
 
       if (results.length === 0) {
-          this.logger_.warn(`⚠️ [MP-AUTH] Sin resultados en API (Delay MP). Asumiendo Webhook Optimista.`);
-          return { 
-              status: PaymentSessionStatus.AUTHORIZED, 
-              data: { ...paymentSessionData, auth_via: "optimistic_empty_list" } 
-          };
+          return { status: PaymentSessionStatus.AUTHORIZED, data: { ...paymentSessionData, auth_via: "optimistic" } };
       }
 
-      results.sort((a, b) => {
-          const dateA = a.date_created ? new Date(a.date_created).getTime() : 0;
-          const dateB = b.date_created ? new Date(b.date_created).getTime() : 0;
-          return dateB - dateA;
-      });
+      // Ordenar por más reciente
+      results.sort((a, b) => (new Date(b.date_created!).getTime() - new Date(a.date_created!).getTime()));
 
       const approvedPayment = results.find((p) => p.status === 'approved');
       if (approvedPayment) {
@@ -159,46 +140,72 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
          };
       }
 
-      const pendingPayment = results.find((p) => 
-          p.status === 'pending' || p.status === 'in_process' || p.status === 'authorized'
-      );
+      const pendingPayment = results.find((p) => ['pending', 'in_process', 'authorized'].includes(p.status!));
       if (pendingPayment) {
-          this.logger_.info(`⏳ [MP-AUTH] Pago PENDIENTE (Status: ${pendingPayment.status}). Esperando.`);
-          return { 
-              status: PaymentSessionStatus.PENDING, 
-              data: paymentSessionData 
-          };
+          return { status: PaymentSessionStatus.PENDING, data: paymentSessionData };
       }
 
-      const rejectedStates = results.map(p => p.status).join(', ');
-      this.logger_.warn(`⛔ [MP-AUTH] Intentos RECHAZADOS. Estados: [${rejectedStates}]`);
-      
-      return { 
-          status: PaymentSessionStatus.ERROR, 
-          data: paymentSessionData 
-      };
+      return { status: PaymentSessionStatus.ERROR, data: paymentSessionData };
 
     } catch (err) {
-       this.logger_.error(`🔥 [MP-AUTH-CRASH] Error API: ${err}. Fallback de emergencia.`);
-       return { 
-           status: PaymentSessionStatus.AUTHORIZED, 
-           data: { ...paymentSessionData, auth_via: "emergency_fallback" } 
-       };
+       this.logger_.error(`🔥 [MP-AUTH] Fallback error: ${err}`);
+       return { status: PaymentSessionStatus.AUTHORIZED, data: { ...paymentSessionData, auth_via: "fallback" } };
     }
   }
 
   // ---------------------------------------------------------
-  // 💸 REEMBOLSOS (REFUNDS) - CORREGIDO ✅
+  // 3. CAPTURA (AHORA REAL ✅)
+  // ---------------------------------------------------------
+  async capturePayment(input: any): Promise<SessionData> { 
+      const sessionData = input.session_data || input.data || {};
+      const amount = input.amount;
+
+      this.logger_.info(`⚡ [MP-CAPTURE] Confirmando captura manual por: $${amount}`);
+
+      // En Mercado Pago "Standard", el pago suele capturarse automáticamente al aprobarse.
+      // Aquí simplemente CONFIRMAMOS a Medusa que el dinero está listo.
+      // Retornar el amount es CLAVE para que Medusa sepa cuánto se puede reembolsar.
+      
+      return {
+          ...sessionData,
+          status: 'captured',
+          amount_captured: amount 
+      }; 
+  }
+
+  // ---------------------------------------------------------
+  // 4. CANCELAR (AHORA REAL ✅)
+  // ---------------------------------------------------------
+  async cancelPayment(input: any): Promise<SessionData> { 
+      const sessionData = input.session_data || input.data || {};
+      const paymentId = sessionData.mp_payment_id;
+
+      this.logger_.info(`🚫 [MP-CANCEL] Cancelando pago... ID: ${paymentId || 'No ID'}`);
+
+      if (paymentId) {
+          try {
+              const payment = new Payment(this.mercadoPagoConfig);
+              await payment.cancel({ id: paymentId as string });
+              this.logger_.info(`✅ [MP-CANCEL] Cancelado en MP exitosamente.`);
+          } catch (error) {
+              this.logger_.warn(`⚠️ [MP-CANCEL] No se pudo cancelar en MP (quizás ya expiró): ${error}`);
+          }
+      }
+
+      return sessionData; 
+  }
+
+  // ---------------------------------------------------------
+  // 5. REEMBOLSOS (YA CORREGIDO ✅)
   // ---------------------------------------------------------
   async refundPayment(input: any): Promise<SessionData> { 
     const sessionData = input.session_data || input.data || {};
     const refundAmount = input.amount;
     const paymentId = sessionData.mp_payment_id;
 
-    this.logger_.info(`💸 [MP-REFUND] Iniciando reembolso para pago MP: ${paymentId}`);
+    this.logger_.info(`💸 [MP-REFUND] Iniciando reembolso: ${paymentId} por $${refundAmount}`);
 
     if (!paymentId) {
-        this.logger_.error(`⛔ [MP-REFUND] No se encontró mp_payment_id. No se puede reembolsar.`);
         throw new Error("No se puede reembolsar: Falta ID de Mercado Pago.");
     }
 
@@ -206,15 +213,13 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         const refund = new PaymentRefund(this.mercadoPagoConfig);
         const finalRefundAmount = Number(refundAmount);
 
-        // CORRECCIÓN AQUÍ: payment_id sale del body
+        // FIX: payment_id fuera del body
         const response = await refund.create({
-            payment_id: paymentId as string, // <--- AHORA ESTÁ EN EL LUGAR CORRECTO
-            body: {
-                amount: finalRefundAmount
-            }
+            payment_id: paymentId as string, 
+            body: { amount: finalRefundAmount }
         });
 
-        this.logger_.info(`✅ [MP-REFUND] Reembolso exitoso. ID: ${response.id}`);
+        this.logger_.info(`✅ [MP-REFUND] Éxito. ID: ${response.id}`);
 
         return {
             ...sessionData,
@@ -228,16 +233,29 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     }
   }
 
+  // ---------------------------------------------------------
+  // 6. ELIMINAR Y OTROS
+  // ---------------------------------------------------------
+  async deletePayment(input: any): Promise<SessionData> { 
+      return this.cancelPayment(input); // Reutilizamos cancelar
+  }
+
   async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { 
       return { status: PaymentSessionStatus.AUTHORIZED }; 
   }
 
-  async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { return this.initiatePayment(input); }
-  async cancelPayment(input: any): Promise<SessionData> { return input.session_data || {}; }
-  async capturePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
-  async deletePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
-  async retrievePayment(input: any): Promise<SessionData> { return input.session_data || {}; }
-  async getWebhookActionAndData(input: any): Promise<WebhookActionResult> { return { action: PaymentActions.NOT_SUPPORTED }; }
+  async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { 
+      // Si el carrito cambia, iniciamos una nueva preferencia
+      return this.initiatePayment(input); 
+  }
+
+  async retrievePayment(input: any): Promise<SessionData> { 
+      return input.session_data || {}; 
+  }
+
+  async getWebhookActionAndData(input: any): Promise<WebhookActionResult> { 
+      return { action: PaymentActions.NOT_SUPPORTED }; 
+  }
 }
 
 export default {
