@@ -20,6 +20,13 @@ type SessionData = Record<string, unknown>;
 class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   static identifier = "mercadopago";
   
+  // 👇👇👇 ESTA ES LA CLAVE QUE FALTABA 👇👇👇
+  // Esto le dice al Admin: "Déjame escribir el monto manualmente"
+  static features = {
+    capture: "partial",
+  };
+  // 👆👆👆 FIN DEL CAMBIO 👆👆👆
+
   protected options_: Options;
   protected logger_: Logger;
   protected mercadoPagoConfig: MercadoPagoConfig;
@@ -37,7 +44,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   // 1. INICIAR PAGO
   // ---------------------------------------------------------
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    // Si ya existe sesión, la reutilizamos
     if (input.data?.id) {
         return { id: input.data.id, data: input.data };
     }
@@ -93,8 +99,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         
         if (!response.id) throw new Error("Mercado Pago no devolvió ID");
 
-        // NOTA: No pasamos 'amount' aquí porque TS no lo permite.
-        // Confiamos en que authorizePayment guarde el dato.
         return {
             id: response.id!,
             data: {
@@ -111,7 +115,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // ---------------------------------------------------------
-  // 2. AUTORIZAR PAGO (Aquí guardamos el monto real ✅)
+  // 2. AUTORIZAR PAGO
   // ---------------------------------------------------------
   async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
     const inputData = paymentSessionData as any;
@@ -131,7 +135,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           return { status: PaymentSessionStatus.AUTHORIZED, data: { ...paymentSessionData, auth_via: "optimistic" } };
       }
 
-      // Ordenar: más reciente primero
       results.sort((a, b) => (new Date(b.date_created!).getTime() - new Date(a.date_created!).getTime()));
 
       const approvedPayment = results.find((p) => p.status === 'approved');
@@ -144,7 +147,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
            data: { 
                ...paymentSessionData, 
                mp_payment_id: approvedPayment.id,
-               // ⭐ CLAVE: Guardamos el monto con nombre 'transaction_amount'
                transaction_amount: approvedPayment.transaction_amount,
                currency_id: approvedPayment.currency_id
            } 
@@ -165,25 +167,25 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // ---------------------------------------------------------
-  // 3. CAPTURA (Usa el dato guardado en Authorize ✅)
+  // 3. CAPTURA (Con seguro anti-error)
   // ---------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
       
-      // 1. ¿Medusa nos da el monto?
       let amountToCapture = input.amount;
 
-      // 2. ⭐ FALLBACK: Si no, lo sacamos de la sesión (donde lo guardamos en el paso 2)
+      // Fallback
       if (!amountToCapture && sessionData.transaction_amount) {
           this.logger_.warn(`⚠️ [MP-CAPTURE] Input amount undefined. Usando fallback de sesión: $${sessionData.transaction_amount}`);
           amountToCapture = sessionData.transaction_amount;
       }
 
-      // Validación final
+      // Si después del fallback sigue vacío, es porque el Admin envió vacío Y la sesión falló.
+      // Lanzamos error para obligar al usuario a reintentar manualmente.
       if (!amountToCapture) {
-          this.logger_.error(`⛔ [MP-CAPTURE] ERROR: No hay monto disponible para capturar.`);
-          // Para evitar bloquear la UI, retornamos lo que tenemos, pero el balance será 0
-          throw new Error("No se puede capturar: monto desconocido.");
+          const msg = "⛔ ERROR: Medusa envió captura vacía. Por favor ingresa el monto MANUALMENTE en el campo de captura.";
+          this.logger_.error(msg);
+          throw new Error(msg);
       }
 
       this.logger_.info(`⚡ [MP-CAPTURE] Capturando: $${amountToCapture}`);
