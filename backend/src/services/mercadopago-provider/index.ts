@@ -37,7 +37,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   // 1. INICIAR PAGO
   // ---------------------------------------------------------
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    // Si ya existe una sesión y tiene ID, la reutilizamos para no crear preferencias infinitas
+    // Si ya existe sesión, la reutilizamos
     if (input.data?.id) {
         return { id: input.data.id, data: input.data };
     }
@@ -93,6 +93,8 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         
         if (!response.id) throw new Error("Mercado Pago no devolvió ID");
 
+        // NOTA: No pasamos 'amount' aquí porque TS no lo permite.
+        // Confiamos en que authorizePayment guarde el dato.
         return {
             id: response.id!,
             data: {
@@ -109,7 +111,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // ---------------------------------------------------------
-  // 2. AUTORIZAR PAGO (CORRECCIÓN CRÍTICA APLICADA ✅)
+  // 2. AUTORIZAR PAGO (Aquí guardamos el monto real ✅)
   // ---------------------------------------------------------
   async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
     const inputData = paymentSessionData as any;
@@ -129,20 +131,20 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           return { status: PaymentSessionStatus.AUTHORIZED, data: { ...paymentSessionData, auth_via: "optimistic" } };
       }
 
-      // Ordenar por fecha descendente
+      // Ordenar: más reciente primero
       results.sort((a, b) => (new Date(b.date_created!).getTime() - new Date(a.date_created!).getTime()));
 
       const approvedPayment = results.find((p) => p.status === 'approved');
       
       if (approvedPayment) {
-         this.logger_.info(`✅ [MP-AUTH] Aprobado: ${approvedPayment.id} | Monto: ${approvedPayment.transaction_amount}`);
+         this.logger_.info(`✅ [MP-AUTH] Aprobado: ${approvedPayment.id} | Monto MP: ${approvedPayment.transaction_amount}`);
          
          return { 
            status: PaymentSessionStatus.AUTHORIZED, 
            data: { 
                ...paymentSessionData, 
                mp_payment_id: approvedPayment.id,
-               // ⭐ GUARDAMOS EL MONTO AQUÍ (CORRECCIÓN DE CURSOR)
+               // ⭐ CLAVE: Guardamos el monto con nombre 'transaction_amount'
                transaction_amount: approvedPayment.transaction_amount,
                currency_id: approvedPayment.currency_id
            } 
@@ -163,15 +165,15 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // ---------------------------------------------------------
-  // 3. CAPTURA (CORRECCIÓN CRÍTICA APLICADA ✅)
+  // 3. CAPTURA (Usa el dato guardado en Authorize ✅)
   // ---------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
       
-      // 1. Intentamos leer el amount que viene del input
+      // 1. ¿Medusa nos da el monto?
       let amountToCapture = input.amount;
 
-      // 2. ⭐ FALLBACK: Si es undefined, usamos el que guardamos en authorizePayment
+      // 2. ⭐ FALLBACK: Si no, lo sacamos de la sesión (donde lo guardamos en el paso 2)
       if (!amountToCapture && sessionData.transaction_amount) {
           this.logger_.warn(`⚠️ [MP-CAPTURE] Input amount undefined. Usando fallback de sesión: $${sessionData.transaction_amount}`);
           amountToCapture = sessionData.transaction_amount;
@@ -180,6 +182,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       // Validación final
       if (!amountToCapture) {
           this.logger_.error(`⛔ [MP-CAPTURE] ERROR: No hay monto disponible para capturar.`);
+          // Para evitar bloquear la UI, retornamos lo que tenemos, pero el balance será 0
           throw new Error("No se puede capturar: monto desconocido.");
       }
 
@@ -188,7 +191,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       return {
           ...sessionData,
           status: 'captured',
-          amount_captured: Number(amountToCapture) // Esto actualiza el balance en Medusa
+          amount_captured: Number(amountToCapture) 
       }; 
   }
 
@@ -229,7 +232,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         const refund = new PaymentRefund(this.mercadoPagoConfig);
         const finalRefundAmount = Number(refundAmount);
 
-        // Recordar: payment_id va como primer argumento, body como segundo
         const response = await refund.create({
             payment_id: paymentId as string, 
             body: { amount: finalRefundAmount }
