@@ -11,6 +11,9 @@ importers:
       '@medusajs/admin-sdk':
         specifier: 2.10.2
         version: 2.10.2
+      '@medusajs/admin-shared':
+        specifier: ^2.12.3
+        version: 2.12.3
       '@medusajs/cli':
         specifier: 2.10.2
         version: 2.10.2(@mikro-orm/core@6.4.3)(@mikro-orm/knex@6.4.3(@mikro-orm/core@6.4.3)(pg@8.16.3))(@mikro-orm/migrations@6.4.3(@mikro-orm/core@6.4.3)(@types/node@20.19.9)(pg@8.16.3))(@mikro-orm/postgresql@6.4.3(@mikro-orm/core@6.4.3))(awilix@8.0.1)(ioredis@5.7.0)(pg@8.16.3)(vite@5.4.19(@types/node@20.19.9))
@@ -100,10 +103,10 @@ importers:
         specifier: ^20.17.10
         version: 20.19.9
       '@types/react':
-        specifier: ^18.3.18
+        specifier: ^18.3.23
         version: 18.3.23
       '@types/react-dom':
-        specifier: ^18.3.5
+        specifier: ^18.3.7
         version: 18.3.7(@types/react@18.3.23)
       jest:
         specifier: ^29.7.0
@@ -1229,6 +1232,9 @@ packages:
 
   '@medusajs/admin-shared@2.10.2':
     resolution: {integrity: sha512-B3rYLl9+41AQfbkA7AzUZlsxsoOjD3jVBIB3W/jTX2mKydMlQHnhTz1d7CnHw93gA97YdvbTmY9AqxYo3CY0Pg==}
+
+  '@medusajs/admin-shared@2.12.3':
+    resolution: {integrity: sha512-R5Jw09WIc5hlvyjt3RIWkseMz/tybR1zRx0PGH3SBf46Njs51tNI8jAcNoLK8e/suI1spowJJjE0pRaRY2kvCw==}
 
   '@medusajs/admin-vite-plugin@2.10.2':
     resolution: {integrity: sha512-cBYdiqLB4m3uNnxZ1tIIgEbaJQzaItPMUX6WPAJoYaaFt4Eo/UPcpHAGCkAaM0lpXQEA0k/KvaILH9maMHviXw==}
@@ -9301,6 +9307,8 @@ snapshots:
       zod: 3.25.76
 
   '@medusajs/admin-shared@2.10.2': {}
+
+  '@medusajs/admin-shared@2.12.3': {}
 
   '@medusajs/admin-vite-plugin@2.10.2(vite@5.4.19(@types/node@20.19.9))':
     dependencies:
