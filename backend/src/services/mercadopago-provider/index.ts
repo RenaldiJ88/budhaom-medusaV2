@@ -201,30 +201,53 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // ---------------------------------------------------------
-  // 5. REEMBOLSOS (REFUNDS)
+  // 5. REEMBOLSOS (REFUNDS) - CORREGIDO
   // ---------------------------------------------------------
   async refundPayment(input: any): Promise<SessionData> { 
+    // 1. Logs para entender qué está pasando si algo falla
+    console.log(`🔍 [MP-REFUND-DEBUG] Input recibido:`, JSON.stringify(input, null, 2));
+
     const sessionData = input.session_data || input.data || {};
-    const refundAmount = input.amount;
     const paymentId = sessionData.mp_payment_id;
 
-    this.logger_.info(`💸 [MP-REFUND] Intentando reembolsar $${refundAmount} ID: ${paymentId}`);
-
-    if (!paymentId) {
-        throw new Error("Falta ID de Mercado Pago para reembolsar.");
+    // 2. Búsqueda robusta del monto (Igual que hicimos en captura)
+    // Medusa v2 a veces manda el monto directo en 'amount' o en 'context.amount'
+    let refundAmount = input.amount;
+    if (refundAmount === undefined && input.context?.amount) {
+        refundAmount = input.context.amount;
     }
+
+    // 3. Validaciones
+    if (!paymentId) {
+        const msg = "⛔ ERROR: No se encontró el ID de pago de MercadoPago (mp_payment_id) en la sesión.";
+        this.logger_.error(msg);
+        throw new Error(msg);
+    }
+
+    if (!refundAmount || Number(refundAmount) <= 0) {
+        const msg = `⛔ ERROR: Monto de reembolso inválido: ${refundAmount}`;
+        this.logger_.error(msg);
+        throw new Error(msg);
+    }
+
+    this.logger_.info(`💸 [MP-REFUND] Procesando reembolso de $${refundAmount} para Pago ID: ${paymentId}`);
 
     try {
         const refund = new PaymentRefund(this.mercadoPagoConfig);
         const finalRefundAmount = Number(refundAmount);
 
+        // 4. Llamada a MercadoPago
         const response = await refund.create({
             payment_id: paymentId as string, 
-            body: { amount: finalRefundAmount }
+            body: { 
+                amount: finalRefundAmount 
+            }
         });
 
-        this.logger_.info(`✅ [MP-REFUND] Exitoso. Refund ID: ${response.id}`);
+        this.logger_.info(`✅ [MP-REFUND] Reembolso exitoso en MP. ID: ${response.id}`);
 
+        // 5. Retorno a Medusa
+        // Es importante devolver sessionData actualizado para que Medusa no pierda los datos viejos
         return {
             ...sessionData,
             refund_id: response.id,
@@ -233,6 +256,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
 
     } catch (error: any) {
         this.logger_.error(`🔥 [MP-REFUND-ERROR]: ${error.message}`);
+        // Importante: Lanzar el error para que el Admin de Medusa muestre el cartel rojo
         throw error;
     }
   }
