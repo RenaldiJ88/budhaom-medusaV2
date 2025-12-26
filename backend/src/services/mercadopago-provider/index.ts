@@ -76,9 +76,9 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         external_reference: resource_id,
         notification_url: `${BACKEND_DOMAIN}/hooks/mp`,
         back_urls: { 
-            success: `${STORE_DOMAIN}/ar/checkout?payment_status=approved`, 
-            failure: `${STORE_DOMAIN}/ar/checkout?payment_status=failure`, 
-            pending: `${STORE_DOMAIN}/ar/checkout?payment_status=pending` 
+            success: `${STORE_DOMAIN}/checkout?payment_status=approved`, 
+            failure: `${STORE_DOMAIN}/checkout?payment_status=failure`, 
+            pending: `${STORE_DOMAIN}/checkout?payment_status=pending` 
         },
         auto_return: "approved",
         binary_mode: true,
