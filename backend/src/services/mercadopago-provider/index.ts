@@ -20,12 +20,10 @@ type SessionData = Record<string, unknown>;
 class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   static identifier = "mercadopago";
   
-  // 👇👇👇 ESTA ES LA CLAVE QUE FALTABA 👇👇👇
-  // Esto le dice al Admin: "Déjame escribir el monto manualmente"
+  // ✅ Configuración para permitir captura manual/parcial en el Admin
   static features = {
     capture: "partial",
   };
-  // 👆👆👆 FIN DEL CAMBIO 👆👆👆
 
   protected options_: Options;
   protected logger_: Logger;
@@ -167,28 +165,41 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // ---------------------------------------------------------
-  // 3. CAPTURA (Con seguro anti-error)
+  // 3. CAPTURA (CORREGIDA Y ROBUSTA) 👇
   // ---------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
+      // Obtenemos la data de la sesión (IDs, tokens, etc.)
       const sessionData = input.session_data || input.data || {};
       
+      // 🕵️‍♂️ BÚSQUEDA DEL MONTO:
+      // 1. input.amount: Estándar
+      // 2. input.context.amount: A veces el Workflow lo mete aquí
       let amountToCapture = input.amount;
+      
+      if (amountToCapture === undefined && input.context?.amount) {
+          amountToCapture = input.context.amount;
+      }
 
-      // Fallback
+      // Si después de buscar sigue siendo undefined, aplicamos tu lógica de Fallback
       if (!amountToCapture && sessionData.transaction_amount) {
           this.logger_.warn(`⚠️ [MP-CAPTURE] Input amount undefined. Usando fallback de sesión: $${sessionData.transaction_amount}`);
           amountToCapture = sessionData.transaction_amount;
       }
 
-      // Si después del fallback sigue vacío, es porque el Admin envió vacío Y la sesión falló.
-      // Lanzamos error para obligar al usuario a reintentar manualmente.
+      // Si sigue sin haber monto, lanzamos error
       if (!amountToCapture) {
           const msg = "⛔ ERROR: Medusa envió captura vacía. Por favor ingresa el monto MANUALMENTE en el campo de captura.";
           this.logger_.error(msg);
+          // Opcional: Descomenta esto para ver qué está llegando realmente si vuelve a fallar
+          // this.logger_.info(`🔍 [MP-DEBUG] Input recibido: ${JSON.stringify(input)}`);
           throw new Error(msg);
       }
 
-      this.logger_.info(`⚡ [MP-CAPTURE] Capturando: $${amountToCapture}`);
+      this.logger_.info(`⚡ [MP-CAPTURE] Capturando monto final: $${amountToCapture}`);
+
+      // En MP Checkout Pro (Redirect), el pago ya se capturó al momento de la compra (generalmente).
+      // Aquí solo registramos en Medusa que el evento ocurrió.
+      // Si usaras "Custom Cards", aquí llamarías a `payment.capture(...)`.
 
       return {
           ...sessionData,
@@ -196,6 +207,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
           amount_captured: Number(amountToCapture) 
       }; 
   }
+  // 👆 FIN DE CORRECCIÓN EN CAPTURA
 
   // ---------------------------------------------------------
   // 4. CANCELAR
