@@ -113,50 +113,65 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 2. AUTORIZAR (Verifica si el usuario pagó en MP)
+  // 2. AUTORIZAR (Corrección anti-crash)
   // -------------------------------------------------------------------
   async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
     const inputData = paymentSessionData as any;
-    const resourceId = inputData.resource_id || inputData.id;
+    // Intentamos obtener el ID de todas las formas posibles
+    const resourceId = inputData.resource_id || inputData.id || inputData.session_id;
+    const paymentId = inputData.mp_payment_id; // Quizás el webhook ya lo guardó
 
-    if (!resourceId) {
-        return { status: PaymentSessionStatus.ERROR, data: paymentSessionData };
-    }
+    this.logger_.info(`🕵️ [MP-AUTH] Verificando sesión. Ref: ${resourceId} | MP ID: ${paymentId || 'N/A'}`);
 
     try {
-      // Buscamos en MP si existe un pago con esta referencia
       const payment = new Payment(this.mercadoPagoConfig);
-      const searchResult = await payment.search({ options: { external_reference: resourceId }});
-      
-      const results = searchResult.results || [];
-      if (results.length === 0) {
-          // Si no hay pago en MP, la sesión sigue autorizada pero "pendiente" de pago real
-          return { status: PaymentSessionStatus.PENDING, data: paymentSessionData };
+      let approvedPayment = null;
+
+      // ESTRATEGIA 1: Si ya tenemos el ID de MP (por el webhook), lo consultamos directo. Es lo más fiable.
+      if (paymentId) {
+          try {
+             const paymentById = await payment.get({ id: paymentId });
+             if (paymentById && paymentById.status === 'approved') {
+                 approvedPayment = paymentById;
+                 this.logger_.info(`✅ [MP-AUTH] Autorizado por ID directo: ${paymentId}`);
+             }
+          } catch (e) {
+             this.logger_.warn(`⚠️ [MP-AUTH] Falló búsqueda por ID ${paymentId}, intentando por referencia...`);
+          }
       }
 
-      // Ordenamos por fecha para tomar el último intento
-      results.sort((a, b) => (new Date(b.date_created!).getTime() - new Date(a.date_created!).getTime()));
-      
-      const approvedPayment = results.find((p) => p.status === 'approved');
-      
+      // ESTRATEGIA 2: Si no funcionó la 1, buscamos por referencia (external_reference)
+      if (!approvedPayment && resourceId) {
+          const searchResult = await payment.search({ options: { external_reference: resourceId }});
+          const results = searchResult.results || [];
+          
+          // Ordenamos por fecha (el más nuevo primero)
+          results.sort((a, b) => (new Date(b.date_created!).getTime() - new Date(a.date_created!).getTime()));
+          
+          approvedPayment = results.find((p) => p.status === 'approved');
+      }
+
+      // RESULTADO FINAL
       if (approvedPayment) {
-         this.logger_.info(`✅ [MP-AUTH] Pago encontrado: ${approvedPayment.id}`);
-         
-         // 🚨 IMPORTANTE: Guardamos el ID real de MP para poder hacer refunds después
          return { 
            status: PaymentSessionStatus.AUTHORIZED, 
            data: { 
                ...paymentSessionData, 
                mp_payment_id: approvedPayment.id,
-               transaction_amount: approvedPayment.transaction_amount
+               transaction_amount: approvedPayment.transaction_amount,
+               payment_status: 'approved'
            } 
          };
       }
 
+      // Si llegamos acá, es que MP dice que NO está aprobado todavía
+      this.logger_.warn(`⏳ [MP-AUTH] No se encontró pago aprobado para ${resourceId}. Estado: PENDING`);
       return { status: PaymentSessionStatus.PENDING, data: paymentSessionData };
 
-    } catch (err) {
-       this.logger_.error(`🔥 [MP-AUTH] Error validando pago: ${err}`);
+    } catch (err: any) {
+       // IMPORTANTE: Capturamos el error para que NO explote el workflow de Medusa
+       this.logger_.error(`🔥 [MP-AUTH-CRASH] Error capturado: ${err.message}`);
+       // Devolvemos ERROR controlado en lugar de lanzar una excepción
        return { status: PaymentSessionStatus.ERROR, data: paymentSessionData };
     }
   }
