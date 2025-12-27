@@ -188,23 +188,23 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (Confirmar el cobro en Medusa)
+  // 3. CAPTURAR (Corrección: Prioridad al input de Medusa)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
-      const sessionData = input.session_data || input.data || {};
-      
-      // En MP Checkout Pro, el pago ya se captura al pagar. 
-      // Aquí solo tomamos el monto para registrarlo en Medusa.
-      const amountToCapture = sessionData.transaction_amount || input.amount;
+    const sessionData = input.session_data || input.data || {};
+    
+    // 🚨 CAMBIO CLAVE: Priorizamos input.amount. 
+    // Medusa nos dice cuánto capturar. Si usamos el de la sesión, podemos desincronizar.
+    const amountToCapture = input.amount || sessionData.transaction_amount;
 
-      this.logger_.info(`⚡ [MP-CAPTURE] Registrando captura por: $${amountToCapture}`);
+    this.logger_.info(`⚡ [MP-CAPTURE] Registrando captura por: $${amountToCapture}`);
 
-      return {
-          ...sessionData,
-          status: 'captured',
-          amount_captured: Number(amountToCapture) 
-      }; 
-  }
+    return {
+        ...sessionData,
+        status: 'captured',
+        amount_captured: Number(amountToCapture) 
+    }; 
+}
 
   // -------------------------------------------------------------------
   // 4. CANCELAR (Anular orden pendiente)
