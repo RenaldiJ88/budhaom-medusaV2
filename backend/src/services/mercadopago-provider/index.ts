@@ -1,7 +1,9 @@
 import { 
   AbstractPaymentProvider, 
   PaymentSessionStatus, 
-  PaymentActions 
+  PaymentActions,
+  Modules,
+  ContainerRegistrationKeys 
 } from "@medusajs/framework/utils";
 import { 
   Logger, 
@@ -23,6 +25,10 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   protected options_: Options;
   protected logger_: Logger;
   protected mercadoPagoConfig: MercadoPagoConfig;
+  
+  // Servicios inyectados
+  protected paymentModuleService_: any; 
+  protected query_: any;
 
   constructor(container: any, options: Options) {
     super(container, options); 
@@ -31,19 +37,22 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     this.mercadoPagoConfig = new MercadoPagoConfig({
       accessToken: options.access_token,
     });
+
+    try {
+        this.paymentModuleService_ = container.resolve(Modules.PAYMENT);
+        this.query_ = container.resolve(ContainerRegistrationKeys.QUERY);
+    } catch (e) {
+        this.logger_.warn("⚠️ [MP-CONSTRUCTOR] No se pudieron resolver servicios internos.");
+    }
   }
 
   // -------------------------------------------------------------------
-  // 1. INICIAR PAGO (Preference)
+  // 1. INICIAR PAGO
   // -------------------------------------------------------------------
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    // Log para trackear inicios
-    // this.logger_.info(`🔥 [MP-INIT] Iniciando...`);
-    
     let resource_id = input.data?.session_id || input.id || input.resource_id;
     if (!resource_id) resource_id = `fallback_${Date.now()}`;
 
-    // URLs
     let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
     if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
     
@@ -52,13 +61,11 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     const failureUrl = `${baseUrlStr}?step=payment&payment_status=failure`;
     const pendingUrl = `${baseUrlStr}?step=payment&payment_status=pending`;
 
-    // Webhook
     let backendDomain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000";
     if (!backendDomain.startsWith("http")) backendDomain = `https://${backendDomain}`;
     const cleanBackendUrl = backendDomain.endsWith("/") ? backendDomain.slice(0, -1) : backendDomain;
     const webhookUrl = `${cleanBackendUrl}/hooks/mp`;
 
-    // Datos
     let amount = input.amount || input.context?.amount;
     if (!amount) amount = 100;
     const email = input.email || input.context?.email || "guest@budhaom.com";
@@ -107,7 +114,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 2. AUTORIZAR (Deep Search)
+  // 2. AUTORIZAR
   // -------------------------------------------------------------------
   async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
     const inputData = paymentSessionData as any;
@@ -157,36 +164,85 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (FIX FINAL: Forzar monto desde data)
+  // 3. CAPTURAR (VERSIÓN CURSOR + GEMINI ULTIMATE)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
-    const sessionData = input.session_data || input.data || {};
-    
-    // 1. Detección del Monto (Sherlock Holmes)
-    // El log mostró que input.amount no viene, pero sessionData.transaction_amount SÍ viene.
-    let amountToCapture = input.amount;
-    
-    if (!amountToCapture && sessionData.transaction_amount) {
-        amountToCapture = sessionData.transaction_amount;
-        this.logger_.info(`💡 [MP-CAPTURE] 'input.amount' vacío. Recuperado de sesión: $${amountToCapture}`);
-    }
+      const sessionData = input.session_data || input.data || {};
+      
+      // LOG DE DIAGNÓSTICO PROFUNDO
+      this.logger_.info(`🔍 [MP-CAPTURE-DEBUG] Keys: ${Object.keys(input).join(', ')}`);
+      // this.logger_.info(`🔍 [MP-CAPTURE-DEBUG] Full Input: ${JSON.stringify(input)}`); // Descomentar si es necesario
 
-    // Convertimos a número seguro
-    const finalAmount = Number(amountToCapture);
+      // 1. Recuperar monto (Input o Session)
+      let amountToCapture = input.amount;
+      if (!amountToCapture && sessionData.transaction_amount) {
+          amountToCapture = sessionData.transaction_amount;
+          this.logger_.info(`💡 [MP-CAPTURE] Input vacío. Usando sesión: $${amountToCapture}`);
+      }
+      
+      const finalAmount = Number(amountToCapture);
+      this.logger_.info(`⚡ [MP-CAPTURE] Procesando captura: $${finalAmount}`);
 
-    this.logger_.info(`⚡ [MP-CAPTURE] Ejecutando captura final por: $${finalAmount}`);
+      // 2. CIRUGÍA DE BASE DE DATOS (Con triple estrategia de búsqueda)
+      if (!input.amount && this.paymentModuleService_ && finalAmount > 0) {
+          try {
+              let targetPaymentId = input.payment_id || input.id;
 
-    // 2. RETORNO EXPLÍCITO (Contra la recomendación de Cursor, porque Medusa no envió el input)
-    // Al devolver esto, forzamos a Medusa a actualizar el 'paid_total'.
-    return {
-        ...sessionData,
-        status: 'captured',          // Forzamos el estado
-        amount_captured: finalAmount // Forzamos el saldo
-    }; 
-}
+              // ESTRATEGIA A: Por Collection ID (Buscando en múltiples lugares)
+              if (!targetPaymentId && this.query_) {
+                  const collectionId = input.payment_collection_id || 
+                                     input.payment_collection?.id || 
+                                     input.payment_session?.payment_collection_id;
+                  
+                  if (collectionId) {
+                      const { data: payments } = await this.query_.graph({
+                          entity: "payment",
+                          fields: ["id", "amount"],
+                          filters: { payment_collection_id: collectionId }
+                      });
+                      if (payments?.length > 0) targetPaymentId = payments[0].id;
+                  }
+              }
+
+              // ESTRATEGIA B: Por Payment Session ID (Sugerencia de Cursor)
+              if (!targetPaymentId && input.payment_session_id && this.query_) {
+                  const { data: sessions } = await this.query_.graph({
+                      entity: "payment_session",
+                      fields: ["payment_collection.payments.id"],
+                      filters: { id: input.payment_session_id }
+                  });
+                  targetPaymentId = sessions?.[0]?.payment_collection?.payments?.[0]?.id;
+              }
+
+              // ACTUALIZACIÓN
+              if (targetPaymentId) {
+                   this.logger_.info(`🔧 [MP-FIX] Update forzado en BD -> ID: ${targetPaymentId} | Monto: $${finalAmount}`);
+                   
+                   await this.paymentModuleService_.updatePayments({
+                       id: targetPaymentId,
+                       amount: finalAmount
+                   });
+                   
+                   this.logger_.info(`✅ [MP-FIX] Base de datos corregida.`);
+              } else {
+                  this.logger_.warn(`⚠️ [MP-FIX] FALLÓ: No se encontró Payment ID con ninguna estrategia.`);
+              }
+
+          } catch (dbError: any) {
+              this.logger_.error(`🔥 [MP-FIX-ERROR] Falló corrección en BD: ${dbError.message}`);
+          }
+      }
+
+      return {
+          ...sessionData,
+          status: 'captured',
+          amount_captured: finalAmount,
+          mp_capture_timestamp: new Date().toISOString()
+      }; 
+  }
 
   // -------------------------------------------------------------------
-  // 4. CANCELAR (Requerido por AbstractPaymentProvider)
+  // 4. CANCELAR
   // -------------------------------------------------------------------
   async cancelPayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
@@ -205,7 +261,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 5. REEMBOLSAR (Blindado)
+  // 5. REEMBOLSAR
   // -------------------------------------------------------------------
   async refundPayment(input: any): Promise<SessionData> { 
     this.logger_.info(`🔍 [MP-REFUND] Input keys: ${Object.keys(input).join(', ')}`);
@@ -221,13 +277,14 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     if (!paymentId) throw new Error("Falta mp_payment_id para reembolsar");
     
     const finalAmount = Number(refundAmount);
-    if (!finalAmount || finalAmount <= 0) this.logger_.warn("⚠️ [MP-REFUND] Monto 0 detectado");
+    // Fallback de seguridad
+    const effectiveAmount = (finalAmount > 0) ? finalAmount : Number(sessionData.transaction_amount);
 
     try {
         const refund = new PaymentRefund(this.mercadoPagoConfig);
         const response = await refund.create({
             payment_id: paymentId as string, 
-            body: { amount: finalAmount }
+            body: { amount: effectiveAmount }
         });
 
         this.logger_.info(`✅ [MP-REFUND] Éxito ID: ${response.id}`);
@@ -236,7 +293,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             ...sessionData,
             refund_id: response.id,
             refund_status: response.status,
-            amount_refunded: (sessionData.amount_refunded as number || 0) + finalAmount
+            amount_refunded: (sessionData.amount_refunded as number || 0) + effectiveAmount
         };
     } catch (error: any) {
         this.logger_.error(`🔥 [MP-REFUND-ERROR]: ${error.cause || error.message}`);
@@ -245,25 +302,13 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // MÉTODOS STANDARD OBLIGATORIOS (Boilerplate)
+  // STANDARD
   // -------------------------------------------------------------------
   async deletePayment(input: any): Promise<SessionData> { return this.cancelPayment(input); }
-  
-  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { 
-      return { status: PaymentSessionStatus.AUTHORIZED }; 
-  }
-  
-  async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { 
-      return this.initiatePayment(input); 
-  }
-  
-  async retrievePayment(input: any): Promise<SessionData> { 
-      return input.session_data || input.data || {}; 
-  }
-
-  async getWebhookActionAndData(input: any): Promise<WebhookActionResult> { 
-      return { action: PaymentActions.NOT_SUPPORTED }; 
-  }
+  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { return { status: PaymentSessionStatus.AUTHORIZED }; }
+  async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { return this.initiatePayment(input); }
+  async retrievePayment(input: any): Promise<SessionData> { return input.session_data || input.data || {}; }
+  async getWebhookActionAndData(input: any): Promise<WebhookActionResult> { return { action: PaymentActions.NOT_SUPPORTED }; }
 }
 
 export default {
