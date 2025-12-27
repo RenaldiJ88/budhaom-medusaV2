@@ -157,19 +157,33 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (Limpia - Cursor Approved)
+  // 3. CAPTURAR (FIX FINAL: Forzar monto desde data)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
-      this.logger_.info(`⚡ [MP-CAPTURE-DEBUG] Input recibido: ${JSON.stringify(input)}`);
-      const sessionData = input.session_data || input.data || {};
-      
-      // No forzamos status ni devolvemos amount_captured.
-      // Dejamos que Medusa use el input.amount para sus cálculos internos.
-      return {
-          ...sessionData,
-          mp_capture_timestamp: new Date().toISOString()
-      }; 
-  }
+    const sessionData = input.session_data || input.data || {};
+    
+    // 1. Detección del Monto (Sherlock Holmes)
+    // El log mostró que input.amount no viene, pero sessionData.transaction_amount SÍ viene.
+    let amountToCapture = input.amount;
+    
+    if (!amountToCapture && sessionData.transaction_amount) {
+        amountToCapture = sessionData.transaction_amount;
+        this.logger_.info(`💡 [MP-CAPTURE] 'input.amount' vacío. Recuperado de sesión: $${amountToCapture}`);
+    }
+
+    // Convertimos a número seguro
+    const finalAmount = Number(amountToCapture);
+
+    this.logger_.info(`⚡ [MP-CAPTURE] Ejecutando captura final por: $${finalAmount}`);
+
+    // 2. RETORNO EXPLÍCITO (Contra la recomendación de Cursor, porque Medusa no envió el input)
+    // Al devolver esto, forzamos a Medusa a actualizar el 'paid_total'.
+    return {
+        ...sessionData,
+        status: 'captured',          // Forzamos el estado
+        amount_captured: finalAmount // Forzamos el saldo
+    }; 
+}
 
   // -------------------------------------------------------------------
   // 4. CANCELAR (Requerido por AbstractPaymentProvider)
