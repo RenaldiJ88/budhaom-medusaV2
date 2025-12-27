@@ -10,7 +10,7 @@ import {
 import { MercadoPagoConfig, Preference, Payment, PaymentRefund } from 'mercadopago';
 
 // ------------------------------------------------------------------
-// ZONA SEGURA: No importamos 'pg' aquí para evitar crashes de inicio
+// ZONA SEGURA: No importamos 'pg' aquí para evitar crashes
 // ------------------------------------------------------------------
 
 type Options = {
@@ -35,58 +35,69 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     this.mercadoPagoConfig = new MercadoPagoConfig({
       accessToken: options.access_token,
     });
-    // Log de vida al iniciar
-    console.log("📢 [MP-CONSTRUCTOR] Provider cargado correctamente.");
+    console.log("📢 [MP-CONSTRUCTOR] Provider cargado y listo.");
   }
 
   // -------------------------------------------------------------------
-  // 1. INICIAR PAGO (Preference)
+  // 1. INICIAR PAGO (CON LOGS DE ESPIONAJE)
   // -------------------------------------------------------------------
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
-    // Log para confirmar que el proceso inicia
-    this.logger_.info(`🔥 [MP-INIT] Creando preferencia para el usuario...`);
-
-    let resource_id = input.data?.session_id || input.id || input.resource_id;
-    if (!resource_id) resource_id = `fallback_${Date.now()}`;
-
-    let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
-    if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
-    
-    const baseUrlStr = `${rawStoreUrl}/checkout`;
-    const webhookUrl = `${(process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000").replace(/\/$/, "")}/hooks/mp`;
-
-    let amount = input.amount || input.context?.amount;
-    if (!amount) amount = 100;
-    const email = input.email || input.context?.email || "guest@budhaom.com";
-
-    const preferenceData = {
-      body: {
-        items: [{
-            id: resource_id,
-            title: "Compra en BUDHA.Om",
-            quantity: 1,
-            unit_price: Number(amount),
-            currency_id: "ARS",
-          }],
-        payer: { email: email },
-        external_reference: resource_id, 
-        notification_url: webhookUrl,
-        back_urls: { 
-            success: `${baseUrlStr}?step=payment&payment_status=success`, 
-            failure: `${baseUrlStr}?step=payment&payment_status=failure`, 
-            pending: `${baseUrlStr}?step=payment&payment_status=pending` 
-        },
-        auto_return: "approved",
-        binary_mode: true,
-        metadata: { original_id: resource_id }
-      },
-    };
+    console.log(`🔥 [MP-INIT] Paso 1: Iniciando...`);
 
     try {
+        let resource_id = input.data?.session_id || input.id || input.resource_id;
+        if (!resource_id) resource_id = `fallback_${Date.now()}`;
+
+        // Validamos URL
+        let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
+        if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
+        const baseUrlStr = `${rawStoreUrl}/checkout`;
+        const webhookUrl = `${(process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000").replace(/\/$/, "")}/hooks/mp`;
+
+        let amount = input.amount || input.context?.amount;
+        if (!amount) amount = 100;
+        const email = input.email || input.context?.email || "guest@budhaom.com";
+
+        // LOG DE LO QUE ENVIAMOS
+        console.log(`🔥 [MP-INIT] Paso 2: Configurando preferencia. Email: ${email}, Monto: ${amount}`);
+        console.log(`🔥 [MP-INIT] URL Webhook: ${webhookUrl}`);
+
+        const preferenceData = {
+          body: {
+            items: [{
+                id: resource_id,
+                title: "Compra en BUDHA.Om",
+                quantity: 1,
+                unit_price: Number(amount),
+                currency_id: "ARS",
+              }],
+            payer: { email: email },
+            external_reference: resource_id, 
+            notification_url: webhookUrl,
+            back_urls: { 
+                success: `${baseUrlStr}?step=payment&payment_status=success`, 
+                failure: `${baseUrlStr}?step=payment&payment_status=failure`, 
+                pending: `${baseUrlStr}?step=payment&payment_status=pending` 
+            },
+            auto_return: "approved",
+            binary_mode: true,
+            metadata: { original_id: resource_id }
+          },
+        };
+
+        console.log(`🔥 [MP-INIT] Paso 3: Enviando a Mercado Pago...`);
+        
         const preference = new Preference(this.mercadoPagoConfig);
         const response = await preference.create(preferenceData);
         
-        if (!response.id) throw new Error("Mercado Pago no devolvió ID");
+        // LOG DE LA RESPUESTA (A ver si llega algo o es undefined)
+        console.log(`🔥 [MP-INIT] Paso 4: Respuesta recibida! ID: ${response.id}`);
+        // console.log(`🔥 [MP-INIT] Init Point: ${response.init_point}`); // Descomentar si quieres ver la URL
+
+        if (!response.id) {
+            console.error("⛔ [MP-INIT-ERROR] Mercado Pago respondió pero SIN ID.");
+            throw new Error("Mercado Pago no devolvió ID");
+        }
 
         return {
             id: response.id!,
@@ -99,6 +110,11 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             },
         };
     } catch (error: any) {
+        // LOG DEL ERROR REAL
+        console.error("⛔ [MP-INIT-FATAL] Error creando preferencia:");
+        console.error(error); // Imprime el objeto error completo
+        if (error.cause) console.error("Causa:", error.cause);
+        
         this.logger_.error(`🔥 [MP-ERROR-INIT]: ${error.message}`);
         throw error;
     }
@@ -155,14 +171,13 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (VERSIÓN ROBUSTA: IMPORTACIÓN DINÁMICA DE PG)
+  // 3. CAPTURAR (CON SQL DIRECTO)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
       
       this.logger_.info(`🔍 [MP-CAPTURE] Iniciando. Keys: ${Object.keys(input).join(', ')}`);
 
-      // 1. Recuperar monto
       let amountToCapture = input.amount;
       if (!amountToCapture && sessionData.transaction_amount) {
           amountToCapture = sessionData.transaction_amount;
@@ -172,16 +187,16 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       const finalAmount = Number(amountToCapture);
       this.logger_.info(`⚡ [MP-CAPTURE] Procesando captura por: $${finalAmount}`);
 
-      // 2. BYPASS DE BASE DE DATOS (Con carga segura de librería)
+      // BYPASS DE BASE DE DATOS
       if (!input.amount && finalAmount > 0) {
           try {
-              // 🛡️ IMPORTACIÓN DINÁMICA: Si falla 'pg', no rompe el inicio del servidor
+              // IMPORTACIÓN DINÁMICA
               const { Client } = require('pg'); 
               
               if (process.env.DATABASE_URL) {
                  const client = new Client({ 
                     connectionString: process.env.DATABASE_URL,
-                    ssl: { rejectUnauthorized: false } // Importante para Railway
+                    ssl: { rejectUnauthorized: false }
                  });
                  
                  await client.connect();
@@ -189,7 +204,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
                  try {
                      let targetPaymentId = input.payment_id || input.id;
 
-                     // A. Búsqueda manual de ID si falta
                      if (!targetPaymentId) {
                          const collectionId = input.payment_collection_id || input.payment_session?.payment_collection_id;
                          if (collectionId) {
@@ -198,20 +212,13 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
                          }
                      }
 
-                     // B. UPDATE NUCLEAR
                      if (targetPaymentId) {
                          this.logger_.info(`🔧 [MP-SQL] Ejecutando UPDATE directo en ID: ${targetPaymentId}`);
-                         
-                         const updateQuery = `
-                             UPDATE payment 
-                             SET amount = $1, captured_amount = $1, captured_at = NOW() 
-                             WHERE id = $2
-                         `;
+                         const updateQuery = `UPDATE payment SET amount = $1, captured_amount = $1, captured_at = NOW() WHERE id = $2`;
                          await client.query(updateQuery, [finalAmount, targetPaymentId]);
-                         
                          this.logger_.info(`✅ [MP-SQL] Base de datos hackeada con éxito.`);
                      } else {
-                         this.logger_.warn(`⚠️ [MP-SQL] No se encontró Payment ID para actualizar.`);
+                         this.logger_.warn(`⚠️ [MP-SQL] No se encontró Payment ID.`);
                      }
                  } finally {
                      await client.end();
@@ -220,10 +227,9 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
                   this.logger_.error(`❌ [MP-SQL] Falta DATABASE_URL.`);
               }
           } catch (err: any) {
-              // Si falla 'require' o la conexión, lo mostramos pero NO fallamos la captura
-              this.logger_.error(`🔥 [MP-SQL-ERROR] No se pudo conectar a DB: ${err.message}`);
+              this.logger_.error(`🔥 [MP-SQL-ERROR] DB Error: ${err.message}`);
               if (err.message.includes('Cannot find module')) {
-                  this.logger_.warn("💡 TIP: Falta instalar pg. Ejecuta 'pnpm add pg' en local y sube package.json");
+                  this.logger_.warn("💡 TIP: Falta instalar pg.");
               }
           }
       }
@@ -236,7 +242,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       }; 
   }
 
-  // ... (RESTO DEL CÓDIGO) ...
+  // ... (RESTO IGUAL) ...
   async cancelPayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
       const paymentId = sessionData.mp_payment_id;
