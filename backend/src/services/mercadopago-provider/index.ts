@@ -25,25 +25,16 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   protected options_: Options;
   protected logger_: Logger;
   protected mercadoPagoConfig: MercadoPagoConfig;
-  
-  // Servicios inyectados
-  protected paymentModuleService_: any; 
-  protected query_: any;
+  protected container_: any; // 👈 Guardamos el contenedor entero
 
   constructor(container: any, options: Options) {
     super(container, options); 
     this.options_ = options;
+    this.container_ = container; // 👈 Guardamos referencia para usar después
     this.logger_ = container.logger;
     this.mercadoPagoConfig = new MercadoPagoConfig({
       accessToken: options.access_token,
     });
-
-    try {
-        this.paymentModuleService_ = container.resolve(Modules.PAYMENT);
-        this.query_ = container.resolve(ContainerRegistrationKeys.QUERY);
-    } catch (e) {
-        this.logger_.warn("⚠️ [MP-CONSTRUCTOR] No se pudieron resolver servicios internos.");
-    }
   }
 
   // -------------------------------------------------------------------
@@ -164,82 +155,83 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (VERSIÓN CURSOR + GEMINI ULTIMATE)
+  // 3. CAPTURAR (VERSIÓN FINAL: MATEMÁTICA CORREGIDA)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
-      const sessionData = input.session_data || input.data || {};
-      
-      // LOG DE DIAGNÓSTICO PROFUNDO
-      this.logger_.info(`🔍 [MP-CAPTURE-DEBUG] Keys: ${Object.keys(input).join(', ')}`);
-      // this.logger_.info(`🔍 [MP-CAPTURE-DEBUG] Full Input: ${JSON.stringify(input)}`); // Descomentar si es necesario
+    const sessionData = input.session_data || input.data || {};
+    
+    this.logger_.info(`🔍 [MP-CAPTURE-DEBUG] Keys: ${Object.keys(input).join(', ')}`);
 
-      // 1. Recuperar monto (Input o Session)
-      let amountToCapture = input.amount;
-      if (!amountToCapture && sessionData.transaction_amount) {
-          amountToCapture = sessionData.transaction_amount;
-          this.logger_.info(`💡 [MP-CAPTURE] Input vacío. Usando sesión: $${amountToCapture}`);
-      }
-      
-      const finalAmount = Number(amountToCapture);
-      this.logger_.info(`⚡ [MP-CAPTURE] Procesando captura: $${finalAmount}`);
+    // 1. Recuperar monto
+    let amountToCapture = input.amount;
+    if (!amountToCapture && sessionData.transaction_amount) {
+        amountToCapture = sessionData.transaction_amount;
+        this.logger_.info(`💡 [MP-CAPTURE] Input vacío. Usando sesión: $${amountToCapture}`);
+    }
+    
+    const finalAmount = Number(amountToCapture);
+    this.logger_.info(`⚡ [MP-CAPTURE] Procesando captura: $${finalAmount}`);
 
-      // 2. CIRUGÍA DE BASE DE DATOS (Con triple estrategia de búsqueda)
-      if (!input.amount && this.paymentModuleService_ && finalAmount > 0) {
-          try {
-              let targetPaymentId = input.payment_id || input.id;
+    // 2. CIRUGÍA DE BASE DE DATOS (LAZY RESOLUTION)
+    if (!input.amount && finalAmount > 0) {
+        try {
+            const paymentModule = this.container_.resolve(Modules.PAYMENT);
+            const query = this.container_.resolve(ContainerRegistrationKeys.QUERY);
 
-              // ESTRATEGIA A: Por Collection ID (Buscando en múltiples lugares)
-              if (!targetPaymentId && this.query_) {
-                  const collectionId = input.payment_collection_id || 
-                                     input.payment_collection?.id || 
-                                     input.payment_session?.payment_collection_id;
-                  
-                  if (collectionId) {
-                      const { data: payments } = await this.query_.graph({
-                          entity: "payment",
-                          fields: ["id", "amount"],
-                          filters: { payment_collection_id: collectionId }
-                      });
-                      if (payments?.length > 0) targetPaymentId = payments[0].id;
-                  }
-              }
+            if (paymentModule) {
+                let targetPaymentId = input.payment_id || input.id;
 
-              // ESTRATEGIA B: Por Payment Session ID (Sugerencia de Cursor)
-              if (!targetPaymentId && input.payment_session_id && this.query_) {
-                  const { data: sessions } = await this.query_.graph({
-                      entity: "payment_session",
-                      fields: ["payment_collection.payments.id"],
-                      filters: { id: input.payment_session_id }
-                  });
-                  targetPaymentId = sessions?.[0]?.payment_collection?.payments?.[0]?.id;
-              }
+                // ESTRATEGIAS DE BÚSQUEDA (Igual que antes)
+                if (!targetPaymentId && query) {
+                    const collectionId = input.payment_collection_id || 
+                                       input.payment_collection?.id || 
+                                       input.payment_session?.payment_collection_id;
+                    if (collectionId) {
+                        const { data: payments } = await query.graph({
+                            entity: "payment",
+                            fields: ["id", "amount"],
+                            filters: { payment_collection_id: collectionId }
+                        });
+                        if (payments?.length > 0) targetPaymentId = payments[0].id;
+                    }
+                }
+                if (!targetPaymentId && input.payment_session_id && query) {
+                    const { data: sessions } = await query.graph({
+                        entity: "payment_session",
+                        fields: ["payment_collection.payments.id"],
+                        filters: { id: input.payment_session_id }
+                    });
+                    targetPaymentId = sessions?.[0]?.payment_collection?.payments?.[0]?.id;
+                }
 
-              // ACTUALIZACIÓN
-              if (targetPaymentId) {
-                   this.logger_.info(`🔧 [MP-FIX] Update forzado en BD -> ID: ${targetPaymentId} | Monto: $${finalAmount}`);
-                   
-                   await this.paymentModuleService_.updatePayments({
-                       id: targetPaymentId,
-                       amount: finalAmount
-                   });
-                   
-                   this.logger_.info(`✅ [MP-FIX] Base de datos corregida.`);
-              } else {
-                  this.logger_.warn(`⚠️ [MP-FIX] FALLÓ: No se encontró Payment ID con ninguna estrategia.`);
-              }
+                // 🔥 AQUÍ ESTÁ EL CAMBIO CLAVE 🔥
+                if (targetPaymentId) {
+                     this.logger_.info(`🔧 [MP-FIX] Corrigiendo BD -> ID: ${targetPaymentId}`);
+                     
+                     await paymentModule.updatePayments({
+                         id: targetPaymentId,
+                         amount: finalAmount,          // Autorizado
+                         captured_amount: finalAmount, // 👈 ¡ESTO FALTABA! (Capturado real)
+                         captured_at: new Date()       // Fecha de captura
+                     });
+                     
+                     this.logger_.info(`✅ [MP-FIX] Base de datos sincronizada (Auth + Captured).`);
+                } else {
+                    this.logger_.warn(`⚠️ [MP-FIX] FALLÓ: No se encontró Payment ID.`);
+                }
+            }
+        } catch (dbError: any) {
+            this.logger_.error(`🔥 [MP-FIX-ERROR] Falló corrección en BD: ${dbError.message}`);
+        }
+    }
 
-          } catch (dbError: any) {
-              this.logger_.error(`🔥 [MP-FIX-ERROR] Falló corrección en BD: ${dbError.message}`);
-          }
-      }
-
-      return {
-          ...sessionData,
-          status: 'captured',
-          amount_captured: finalAmount,
-          mp_capture_timestamp: new Date().toISOString()
-      }; 
-  }
+    return {
+        ...sessionData,
+        status: 'captured',
+        amount_captured: finalAmount,
+        mp_capture_timestamp: new Date().toISOString()
+    }; 
+}
 
   // -------------------------------------------------------------------
   // 4. CANCELAR
