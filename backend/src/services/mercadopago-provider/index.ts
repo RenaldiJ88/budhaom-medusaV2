@@ -1,7 +1,9 @@
 import { 
   AbstractPaymentProvider, 
   PaymentSessionStatus, 
-  PaymentActions
+  PaymentActions,
+  Modules,
+  ContainerRegistrationKeys 
 } from "@medusajs/framework/utils";
 import { 
   Logger, 
@@ -36,20 +38,19 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       accessToken: options.access_token,
     });
 
-    // 💉 INYECCIÓN ROBUSTA (Usando strings para evitar errores de importación)
+    // 💉 INYECCIÓN ESTÁNDAR (Como recomienda Cursor)
     this.logger_.info("🏗️ [MP-CONSTRUCTOR] Iniciando inyección de servicios...");
     
     try {
-        // Usamos 'payment' y 'query' en texto plano. Es más seguro en runtime.
-        this.paymentModule_ = container.resolve('payment');
-        this.logger_.info(`✅ [MP-CONSTRUCTOR] Payment Module cargado: ${!!this.paymentModule_}`);
+        this.paymentModule_ = container.resolve(Modules.PAYMENT);
+        this.logger_.info(`✅ [MP-CONSTRUCTOR] Payment Module cargado.`);
     } catch (e) {
         this.logger_.error(`❌ [MP-CONSTRUCTOR] Falló carga de Payment Module: ${e}`);
     }
 
     try {
-        this.query_ = container.resolve('query');
-        this.logger_.info(`✅ [MP-CONSTRUCTOR] Query Module cargado: ${!!this.query_}`);
+        this.query_ = container.resolve(ContainerRegistrationKeys.QUERY);
+        this.logger_.info(`✅ [MP-CONSTRUCTOR] Query Module cargado.`);
     } catch (e) {
         this.logger_.error(`❌ [MP-CONSTRUCTOR] Falló carga de Query Module: ${e}`);
     }
@@ -173,14 +174,14 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (VERSIÓN FINAL: CORRECCIÓN DB)
+  // 3. CAPTURAR (VERSIÓN OFICIAL: USANDO capturePayment DEL SERVICIO)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
       
       this.logger_.info(`🔍 [MP-CAPTURE-DEBUG] Keys: ${Object.keys(input).join(', ')}`);
 
-      // 1. Recuperar monto (Sherlock Holmes)
+      // 1. Recuperar monto
       let amountToCapture = input.amount;
       if (!amountToCapture && sessionData.transaction_amount) {
           amountToCapture = sessionData.transaction_amount;
@@ -190,13 +191,12 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       const finalAmount = Number(amountToCapture);
       this.logger_.info(`⚡ [MP-CAPTURE] Procesando captura: $${finalAmount}`);
 
-      // 2. CIRUGÍA DE BASE DE DATOS
-      // Usamos los servicios que cargamos en el constructor (paymentModule_ y query_)
+      // 2. USO DEL SERVICIO OFICIAL DE MEDUSA
       if (!input.amount && finalAmount > 0 && this.paymentModule_) {
           try {
               let targetPaymentId = input.payment_id || input.id;
 
-              // BÚSQUEDA A: Por Collection ID
+              // BÚSQUEDA DEL ID (Triple estrategia)
               if (!targetPaymentId && this.query_) {
                   const collectionId = input.payment_collection_id || 
                                      input.payment_collection?.id || 
@@ -210,8 +210,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
                       if (payments?.length > 0) targetPaymentId = payments[0].id;
                   }
               }
-
-              // BÚSQUEDA B: Por Payment Session ID
               if (!targetPaymentId && input.payment_session_id && this.query_) {
                   const { data: sessions } = await this.query_.graph({
                       entity: "payment_session",
@@ -221,26 +219,30 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
                   targetPaymentId = sessions?.[0]?.payment_collection?.payments?.[0]?.id;
               }
 
-              // ACTUALIZACIÓN DE SALDO (Autorizado + Capturado)
+              // 🔥 AQUÍ EL CAMBIO: Usamos 'capture' en lugar de 'update'
+              // Esto hace que Medusa registre la captura OFICIALMENTE
               if (targetPaymentId) {
-                   this.logger_.info(`🔧 [MP-FIX] Corrigiendo BD -> ID: ${targetPaymentId}`);
+                   this.logger_.info(`🔧 [MP-FIX] Ejecutando CAPTURA INTERNA en ID: ${targetPaymentId}`);
                    
+                   // Primero aseguramos que el monto sea correcto
                    await this.paymentModule_.updatePayments({
                        id: targetPaymentId,
-                       amount: finalAmount,           // Fix: Monto autorizado
-                       captured_amount: finalAmount,  // Fix: Monto capturado (para permitir refund)
-                       captured_at: new Date()
+                       amount: finalAmount
+                   });
+
+                   // Luego CAPTURAMOS oficialmente (Esto llena captured_at y captured_amount)
+                   await this.paymentModule_.capturePayment({
+                       payment_id: targetPaymentId,
+                       amount: finalAmount
                    });
                    
-                   this.logger_.info(`✅ [MP-FIX] Base de datos sincronizada correctamente.`);
+                   this.logger_.info(`✅ [MP-FIX] Captura interna exitosa.`);
               } else {
                   this.logger_.warn(`⚠️ [MP-FIX] FALLÓ: No se encontró Payment ID.`);
               }
           } catch (dbError: any) {
-              this.logger_.error(`🔥 [MP-FIX-ERROR] Falló corrección en BD: ${dbError.message}`);
+              this.logger_.error(`🔥 [MP-FIX-ERROR] Falló captura interna: ${dbError.message}`);
           }
-      } else if (!this.paymentModule_) {
-          this.logger_.error(`🔥 [MP-FIX-ERROR] No se puede corregir la BD porque Payment Module no cargó.`);
       }
 
       return {
