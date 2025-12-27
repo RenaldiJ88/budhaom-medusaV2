@@ -8,7 +8,10 @@ import {
   WebhookActionResult 
 } from "@medusajs/framework/types";
 import { MercadoPagoConfig, Preference, Payment, PaymentRefund } from 'mercadopago';
-import { Client } from 'pg'; // 👈 IMPORTANTE: Usamos el cliente directo de Postgres
+
+// ------------------------------------------------------------------
+// ZONA SEGURA: No importamos 'pg' aquí para evitar crashes de inicio
+// ------------------------------------------------------------------
 
 type Options = {
   access_token: string;
@@ -25,7 +28,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   protected logger_: Logger;
   protected mercadoPagoConfig: MercadoPagoConfig;
   
-  // Ya no inyectamos nada raro en el constructor para no romper el servidor
   constructor(container: any, options: Options) {
     super(container, options); 
     this.options_ = options;
@@ -33,29 +35,47 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     this.mercadoPagoConfig = new MercadoPagoConfig({
       accessToken: options.access_token,
     });
+    // Log de vida al iniciar
+    console.log("📢 [MP-CONSTRUCTOR] Provider cargado correctamente.");
   }
 
   // -------------------------------------------------------------------
-  // 1. INICIAR PAGO (Sin cambios)
+  // 1. INICIAR PAGO (Preference)
   // -------------------------------------------------------------------
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
+    // Log para confirmar que el proceso inicia
+    this.logger_.info(`🔥 [MP-INIT] Creando preferencia para el usuario...`);
+
     let resource_id = input.data?.session_id || input.id || input.resource_id;
     if (!resource_id) resource_id = `fallback_${Date.now()}`;
+
     let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
     if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
+    
     const baseUrlStr = `${rawStoreUrl}/checkout`;
     const webhookUrl = `${(process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000").replace(/\/$/, "")}/hooks/mp`;
+
     let amount = input.amount || input.context?.amount;
     if (!amount) amount = 100;
     const email = input.email || input.context?.email || "guest@budhaom.com";
 
     const preferenceData = {
       body: {
-        items: [{ id: resource_id, title: "Compra en BUDHA.Om", quantity: 1, unit_price: Number(amount), currency_id: "ARS" }],
+        items: [{
+            id: resource_id,
+            title: "Compra en BUDHA.Om",
+            quantity: 1,
+            unit_price: Number(amount),
+            currency_id: "ARS",
+          }],
         payer: { email: email },
         external_reference: resource_id, 
         notification_url: webhookUrl,
-        back_urls: { success: `${baseUrlStr}?step=payment&payment_status=success`, failure: `${baseUrlStr}?step=payment&payment_status=failure`, pending: `${baseUrlStr}?step=payment&payment_status=pending` },
+        back_urls: { 
+            success: `${baseUrlStr}?step=payment&payment_status=success`, 
+            failure: `${baseUrlStr}?step=payment&payment_status=failure`, 
+            pending: `${baseUrlStr}?step=payment&payment_status=pending` 
+        },
         auto_return: "approved",
         binary_mode: true,
         metadata: { original_id: resource_id }
@@ -65,13 +85,27 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     try {
         const preference = new Preference(this.mercadoPagoConfig);
         const response = await preference.create(preferenceData);
+        
         if (!response.id) throw new Error("Mercado Pago no devolvió ID");
-        return { id: response.id!, data: { id: response.id!, init_point: response.init_point!, sandbox_init_point: response.sandbox_init_point!, resource_id: resource_id, transaction_amount: amount } };
-    } catch (error: any) { this.logger_.error(`🔥 [MP-ERROR]: ${error.message}`); throw error; }
+
+        return {
+            id: response.id!,
+            data: {
+                id: response.id!,
+                init_point: response.init_point!, 
+                sandbox_init_point: response.sandbox_init_point!,
+                resource_id: resource_id,
+                transaction_amount: amount
+            },
+        };
+    } catch (error: any) {
+        this.logger_.error(`🔥 [MP-ERROR-INIT]: ${error.message}`);
+        throw error;
+    }
   }
 
   // -------------------------------------------------------------------
-  // 2. AUTORIZAR (Sin cambios)
+  // 2. AUTORIZAR
   // -------------------------------------------------------------------
   async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
     const inputData = paymentSessionData as any;
@@ -79,31 +113,54 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     const resourceId = cleanData.resource_id || cleanData.id || cleanData.session_id || inputData.id;
     const paymentId = cleanData.mp_payment_id || inputData.mp_payment_id;
 
-    if (!resourceId && !paymentId) return { status: PaymentSessionStatus.PENDING, data: paymentSessionData };
+    if (!resourceId && !paymentId) {
+        return { status: PaymentSessionStatus.PENDING, data: paymentSessionData };
+    }
 
     try {
       const payment = new Payment(this.mercadoPagoConfig);
       let approvedPayment = null;
-      if (paymentId) { try { const p = await payment.get({ id: paymentId }); if (p && p.status === 'approved') approvedPayment = p; } catch (e) {} }
+
+      if (paymentId) {
+          try {
+             const paymentById = await payment.get({ id: paymentId });
+             if (paymentById && paymentById.status === 'approved') approvedPayment = paymentById;
+          } catch (e) { /* Ignorar */ }
+      }
+
       if (!approvedPayment && resourceId) {
-          const s = await payment.search({ options: { external_reference: resourceId }});
-          if (s.results && s.results.length > 0) approvedPayment = s.results.sort((a, b) => new Date(b.date_created!).getTime() - new Date(a.date_created!).getTime()).find(p => p.status === 'approved');
+          const searchResult = await payment.search({ options: { external_reference: resourceId }});
+          const results = searchResult.results || [];
+          results.sort((a, b) => (new Date(b.date_created!).getTime() - new Date(a.date_created!).getTime()));
+          approvedPayment = results.find((p) => p.status === 'approved');
       }
 
       if (approvedPayment) {
          this.logger_.info(`✅ [MP-AUTH] Autorizado: ${approvedPayment.id}`);
-         return { status: PaymentSessionStatus.AUTHORIZED, data: { ...cleanData, mp_payment_id: approvedPayment.id, transaction_amount: approvedPayment.transaction_amount, payment_status: 'approved' } };
+         return { 
+           status: PaymentSessionStatus.AUTHORIZED, 
+           data: { 
+               ...cleanData, 
+               mp_payment_id: approvedPayment.id,
+               transaction_amount: approvedPayment.transaction_amount,
+               payment_status: 'approved'
+           } 
+         };
       }
       return { status: PaymentSessionStatus.PENDING, data: paymentSessionData };
-    } catch (err: any) { this.logger_.error(`🔥 [MP-AUTH-ERROR] ${err.message}`); return { status: PaymentSessionStatus.ERROR, data: paymentSessionData }; }
+    } catch (err: any) {
+       this.logger_.error(`🔥 [MP-AUTH-ERROR] ${err.message}`);
+       return { status: PaymentSessionStatus.ERROR, data: paymentSessionData };
+    }
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (VERSIÓN FRANCOTIRADOR SQL - PG CLIENT DIRECTO)
+  // 3. CAPTURAR (VERSIÓN ROBUSTA: IMPORTACIÓN DINÁMICA DE PG)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
-      this.logger_.info(`🔍 [MP-CAPTURE] Keys: ${Object.keys(input).join(', ')}`);
+      
+      this.logger_.info(`🔍 [MP-CAPTURE] Iniciando. Keys: ${Object.keys(input).join(', ')}`);
 
       // 1. Recuperar monto
       let amountToCapture = input.amount;
@@ -113,21 +170,26 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       }
       
       const finalAmount = Number(amountToCapture);
-      this.logger_.info(`⚡ [MP-CAPTURE] Procesando: $${finalAmount}`);
+      this.logger_.info(`⚡ [MP-CAPTURE] Procesando captura por: $${finalAmount}`);
 
-      // 2. CONEXIÓN DIRECTA A POSTGRES (Bypass total de Medusa Container)
+      // 2. BYPASS DE BASE DE DATOS (Con carga segura de librería)
       if (!input.amount && finalAmount > 0) {
           try {
-             // Buscamos el ID
-             let targetPaymentId = input.payment_id || input.id;
-             
-             // Si no viene el ID, conectamos a la BD para buscarlo
-             if (process.env.DATABASE_URL) {
-                 const client = new Client({ connectionString: process.env.DATABASE_URL });
+              // 🛡️ IMPORTACIÓN DINÁMICA: Si falla 'pg', no rompe el inicio del servidor
+              const { Client } = require('pg'); 
+              
+              if (process.env.DATABASE_URL) {
+                 const client = new Client({ 
+                    connectionString: process.env.DATABASE_URL,
+                    ssl: { rejectUnauthorized: false } // Importante para Railway
+                 });
+                 
                  await client.connect();
                  
                  try {
-                     // A. Búsqueda por Collection ID si hace falta
+                     let targetPaymentId = input.payment_id || input.id;
+
+                     // A. Búsqueda manual de ID si falta
                      if (!targetPaymentId) {
                          const collectionId = input.payment_collection_id || input.payment_session?.payment_collection_id;
                          if (collectionId) {
@@ -138,10 +200,8 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
 
                      // B. UPDATE NUCLEAR
                      if (targetPaymentId) {
-                         this.logger_.info(`🔧 [MP-PG] Ejecutando UPDATE crudo en Payment ID: ${targetPaymentId}`);
+                         this.logger_.info(`🔧 [MP-SQL] Ejecutando UPDATE directo en ID: ${targetPaymentId}`);
                          
-                         // Actualizamos amount, captured_amount y captured_at
-                         // IMPORTANTE: Ajustamos para que Medusa vea la plata
                          const updateQuery = `
                              UPDATE payment 
                              SET amount = $1, captured_amount = $1, captured_at = NOW() 
@@ -149,18 +209,22 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
                          `;
                          await client.query(updateQuery, [finalAmount, targetPaymentId]);
                          
-                         this.logger_.info(`✅ [MP-PG] Base de datos actualizada directamente.`);
+                         this.logger_.info(`✅ [MP-SQL] Base de datos hackeada con éxito.`);
                      } else {
-                         this.logger_.warn(`⚠️ [MP-PG] No se encontró Payment ID para actualizar.`);
+                         this.logger_.warn(`⚠️ [MP-SQL] No se encontró Payment ID para actualizar.`);
                      }
                  } finally {
-                     await client.end(); // Cerramos la conexión pase lo que pase
+                     await client.end();
                  }
-             } else {
-                 this.logger_.error(`❌ [MP-PG] No hay DATABASE_URL en variables de entorno.`);
-             }
-          } catch (dbError: any) {
-              this.logger_.error(`🔥 [MP-PG-ERROR] Falló conexión directa: ${dbError.message}`);
+              } else {
+                  this.logger_.error(`❌ [MP-SQL] Falta DATABASE_URL.`);
+              }
+          } catch (err: any) {
+              // Si falla 'require' o la conexión, lo mostramos pero NO fallamos la captura
+              this.logger_.error(`🔥 [MP-SQL-ERROR] No se pudo conectar a DB: ${err.message}`);
+              if (err.message.includes('Cannot find module')) {
+                  this.logger_.warn("💡 TIP: Falta instalar pg. Ejecuta 'pnpm add pg' en local y sube package.json");
+              }
           }
       }
 
@@ -172,7 +236,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       }; 
   }
 
-  // ... (RESTO SIN CAMBIOS) ...
+  // ... (RESTO DEL CÓDIGO) ...
   async cancelPayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
       const paymentId = sessionData.mp_payment_id;
