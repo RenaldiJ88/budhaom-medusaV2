@@ -1,9 +1,7 @@
 import { 
   AbstractPaymentProvider, 
   PaymentSessionStatus, 
-  PaymentActions,
-  Modules,
-  ContainerRegistrationKeys 
+  PaymentActions
 } from "@medusajs/framework/utils";
 import { 
   Logger, 
@@ -25,16 +23,36 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   protected options_: Options;
   protected logger_: Logger;
   protected mercadoPagoConfig: MercadoPagoConfig;
-  protected container_: any; // 👈 Guardamos el contenedor entero
+  
+  // Servicios internos
+  protected paymentModule_: any; 
+  protected query_: any;
 
   constructor(container: any, options: Options) {
     super(container, options); 
     this.options_ = options;
-    this.container_ = container; // 👈 Guardamos referencia para usar después
     this.logger_ = container.logger;
     this.mercadoPagoConfig = new MercadoPagoConfig({
       accessToken: options.access_token,
     });
+
+    // 💉 INYECCIÓN ROBUSTA (Usando strings para evitar errores de importación)
+    this.logger_.info("🏗️ [MP-CONSTRUCTOR] Iniciando inyección de servicios...");
+    
+    try {
+        // Usamos 'payment' y 'query' en texto plano. Es más seguro en runtime.
+        this.paymentModule_ = container.resolve('payment');
+        this.logger_.info(`✅ [MP-CONSTRUCTOR] Payment Module cargado: ${!!this.paymentModule_}`);
+    } catch (e) {
+        this.logger_.error(`❌ [MP-CONSTRUCTOR] Falló carga de Payment Module: ${e}`);
+    }
+
+    try {
+        this.query_ = container.resolve('query');
+        this.logger_.info(`✅ [MP-CONSTRUCTOR] Query Module cargado: ${!!this.query_}`);
+    } catch (e) {
+        this.logger_.error(`❌ [MP-CONSTRUCTOR] Falló carga de Query Module: ${e}`);
+    }
   }
 
   // -------------------------------------------------------------------
@@ -155,83 +173,83 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (VERSIÓN FINAL: MATEMÁTICA CORREGIDA)
+  // 3. CAPTURAR (VERSIÓN FINAL: CORRECCIÓN DB)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
-    const sessionData = input.session_data || input.data || {};
-    
-    this.logger_.info(`🔍 [MP-CAPTURE-DEBUG] Keys: ${Object.keys(input).join(', ')}`);
+      const sessionData = input.session_data || input.data || {};
+      
+      this.logger_.info(`🔍 [MP-CAPTURE-DEBUG] Keys: ${Object.keys(input).join(', ')}`);
 
-    // 1. Recuperar monto
-    let amountToCapture = input.amount;
-    if (!amountToCapture && sessionData.transaction_amount) {
-        amountToCapture = sessionData.transaction_amount;
-        this.logger_.info(`💡 [MP-CAPTURE] Input vacío. Usando sesión: $${amountToCapture}`);
-    }
-    
-    const finalAmount = Number(amountToCapture);
-    this.logger_.info(`⚡ [MP-CAPTURE] Procesando captura: $${finalAmount}`);
+      // 1. Recuperar monto (Sherlock Holmes)
+      let amountToCapture = input.amount;
+      if (!amountToCapture && sessionData.transaction_amount) {
+          amountToCapture = sessionData.transaction_amount;
+          this.logger_.info(`💡 [MP-CAPTURE] Input vacío. Usando sesión: $${amountToCapture}`);
+      }
+      
+      const finalAmount = Number(amountToCapture);
+      this.logger_.info(`⚡ [MP-CAPTURE] Procesando captura: $${finalAmount}`);
 
-    // 2. CIRUGÍA DE BASE DE DATOS (LAZY RESOLUTION)
-    if (!input.amount && finalAmount > 0) {
-        try {
-            const paymentModule = this.container_.resolve(Modules.PAYMENT);
-            const query = this.container_.resolve(ContainerRegistrationKeys.QUERY);
+      // 2. CIRUGÍA DE BASE DE DATOS
+      // Usamos los servicios que cargamos en el constructor (paymentModule_ y query_)
+      if (!input.amount && finalAmount > 0 && this.paymentModule_) {
+          try {
+              let targetPaymentId = input.payment_id || input.id;
 
-            if (paymentModule) {
-                let targetPaymentId = input.payment_id || input.id;
+              // BÚSQUEDA A: Por Collection ID
+              if (!targetPaymentId && this.query_) {
+                  const collectionId = input.payment_collection_id || 
+                                     input.payment_collection?.id || 
+                                     input.payment_session?.payment_collection_id;
+                  if (collectionId) {
+                      const { data: payments } = await this.query_.graph({
+                          entity: "payment",
+                          fields: ["id", "amount"],
+                          filters: { payment_collection_id: collectionId }
+                      });
+                      if (payments?.length > 0) targetPaymentId = payments[0].id;
+                  }
+              }
 
-                // ESTRATEGIAS DE BÚSQUEDA (Igual que antes)
-                if (!targetPaymentId && query) {
-                    const collectionId = input.payment_collection_id || 
-                                       input.payment_collection?.id || 
-                                       input.payment_session?.payment_collection_id;
-                    if (collectionId) {
-                        const { data: payments } = await query.graph({
-                            entity: "payment",
-                            fields: ["id", "amount"],
-                            filters: { payment_collection_id: collectionId }
-                        });
-                        if (payments?.length > 0) targetPaymentId = payments[0].id;
-                    }
-                }
-                if (!targetPaymentId && input.payment_session_id && query) {
-                    const { data: sessions } = await query.graph({
-                        entity: "payment_session",
-                        fields: ["payment_collection.payments.id"],
-                        filters: { id: input.payment_session_id }
-                    });
-                    targetPaymentId = sessions?.[0]?.payment_collection?.payments?.[0]?.id;
-                }
+              // BÚSQUEDA B: Por Payment Session ID
+              if (!targetPaymentId && input.payment_session_id && this.query_) {
+                  const { data: sessions } = await this.query_.graph({
+                      entity: "payment_session",
+                      fields: ["payment_collection.payments.id"],
+                      filters: { id: input.payment_session_id }
+                  });
+                  targetPaymentId = sessions?.[0]?.payment_collection?.payments?.[0]?.id;
+              }
 
-                // 🔥 AQUÍ ESTÁ EL CAMBIO CLAVE 🔥
-                if (targetPaymentId) {
-                     this.logger_.info(`🔧 [MP-FIX] Corrigiendo BD -> ID: ${targetPaymentId}`);
-                     
-                     await paymentModule.updatePayments({
-                         id: targetPaymentId,
-                         amount: finalAmount,          // Autorizado
-                         captured_amount: finalAmount, // 👈 ¡ESTO FALTABA! (Capturado real)
-                         captured_at: new Date()       // Fecha de captura
-                     });
-                     
-                     this.logger_.info(`✅ [MP-FIX] Base de datos sincronizada (Auth + Captured).`);
-                } else {
-                    this.logger_.warn(`⚠️ [MP-FIX] FALLÓ: No se encontró Payment ID.`);
-                }
-            }
-        } catch (dbError: any) {
-            this.logger_.error(`🔥 [MP-FIX-ERROR] Falló corrección en BD: ${dbError.message}`);
-        }
-    }
+              // ACTUALIZACIÓN DE SALDO (Autorizado + Capturado)
+              if (targetPaymentId) {
+                   this.logger_.info(`🔧 [MP-FIX] Corrigiendo BD -> ID: ${targetPaymentId}`);
+                   
+                   await this.paymentModule_.updatePayments({
+                       id: targetPaymentId,
+                       amount: finalAmount,           // Fix: Monto autorizado
+                       captured_amount: finalAmount,  // Fix: Monto capturado (para permitir refund)
+                       captured_at: new Date()
+                   });
+                   
+                   this.logger_.info(`✅ [MP-FIX] Base de datos sincronizada correctamente.`);
+              } else {
+                  this.logger_.warn(`⚠️ [MP-FIX] FALLÓ: No se encontró Payment ID.`);
+              }
+          } catch (dbError: any) {
+              this.logger_.error(`🔥 [MP-FIX-ERROR] Falló corrección en BD: ${dbError.message}`);
+          }
+      } else if (!this.paymentModule_) {
+          this.logger_.error(`🔥 [MP-FIX-ERROR] No se puede corregir la BD porque Payment Module no cargó.`);
+      }
 
-    return {
-        ...sessionData,
-        status: 'captured',
-        amount_captured: finalAmount,
-        mp_capture_timestamp: new Date().toISOString()
-    }; 
-}
+      return {
+          ...sessionData,
+          status: 'captured',
+          amount_captured: finalAmount,
+          mp_capture_timestamp: new Date().toISOString()
+      }; 
+  }
 
   // -------------------------------------------------------------------
   // 4. CANCELAR
@@ -269,7 +287,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     if (!paymentId) throw new Error("Falta mp_payment_id para reembolsar");
     
     const finalAmount = Number(refundAmount);
-    // Fallback de seguridad
     const effectiveAmount = (finalAmount > 0) ? finalAmount : Number(sessionData.transaction_amount);
 
     try {
