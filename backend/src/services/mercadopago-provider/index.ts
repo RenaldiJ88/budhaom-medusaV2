@@ -155,85 +155,83 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (VERSIÓN LAZY RESOLUTION)
+  // 3. CAPTURAR (VERSIÓN FINAL: MATEMÁTICA CORREGIDA)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
-      const sessionData = input.session_data || input.data || {};
-      
-      this.logger_.info(`🔍 [MP-CAPTURE-DEBUG] Keys: ${Object.keys(input).join(', ')}`);
+    const sessionData = input.session_data || input.data || {};
+    
+    this.logger_.info(`🔍 [MP-CAPTURE-DEBUG] Keys: ${Object.keys(input).join(', ')}`);
 
-      // 1. Recuperar monto
-      let amountToCapture = input.amount;
-      if (!amountToCapture && sessionData.transaction_amount) {
-          amountToCapture = sessionData.transaction_amount;
-          this.logger_.info(`💡 [MP-CAPTURE] Input vacío. Usando sesión: $${amountToCapture}`);
-      }
-      
-      const finalAmount = Number(amountToCapture);
-      this.logger_.info(`⚡ [MP-CAPTURE] Procesando captura: $${finalAmount}`);
+    // 1. Recuperar monto
+    let amountToCapture = input.amount;
+    if (!amountToCapture && sessionData.transaction_amount) {
+        amountToCapture = sessionData.transaction_amount;
+        this.logger_.info(`💡 [MP-CAPTURE] Input vacío. Usando sesión: $${amountToCapture}`);
+    }
+    
+    const finalAmount = Number(amountToCapture);
+    this.logger_.info(`⚡ [MP-CAPTURE] Procesando captura: $${finalAmount}`);
 
-      // 2. CIRUGÍA DE BASE DE DATOS (Resolviendo servicios AQUÍ mismo)
-      if (!input.amount && finalAmount > 0) {
-          try {
-              // RESOLUCIÓN PEREZOSA: Pedimos los servicios ahora, que seguro ya cargaron
-              const paymentModule = this.container_.resolve(Modules.PAYMENT);
-              const query = this.container_.resolve(ContainerRegistrationKeys.QUERY);
+    // 2. CIRUGÍA DE BASE DE DATOS (LAZY RESOLUTION)
+    if (!input.amount && finalAmount > 0) {
+        try {
+            const paymentModule = this.container_.resolve(Modules.PAYMENT);
+            const query = this.container_.resolve(ContainerRegistrationKeys.QUERY);
 
-              if (paymentModule) {
-                  let targetPaymentId = input.payment_id || input.id;
+            if (paymentModule) {
+                let targetPaymentId = input.payment_id || input.id;
 
-                  // ESTRATEGIA A: Por Collection ID
-                  if (!targetPaymentId && query) {
-                      const collectionId = input.payment_collection_id || 
-                                         input.payment_collection?.id || 
-                                         input.payment_session?.payment_collection_id;
-                      
-                      if (collectionId) {
-                          const { data: payments } = await query.graph({
-                              entity: "payment",
-                              fields: ["id", "amount"],
-                              filters: { payment_collection_id: collectionId }
-                          });
-                          if (payments?.length > 0) targetPaymentId = payments[0].id;
-                      }
-                  }
+                // ESTRATEGIAS DE BÚSQUEDA (Igual que antes)
+                if (!targetPaymentId && query) {
+                    const collectionId = input.payment_collection_id || 
+                                       input.payment_collection?.id || 
+                                       input.payment_session?.payment_collection_id;
+                    if (collectionId) {
+                        const { data: payments } = await query.graph({
+                            entity: "payment",
+                            fields: ["id", "amount"],
+                            filters: { payment_collection_id: collectionId }
+                        });
+                        if (payments?.length > 0) targetPaymentId = payments[0].id;
+                    }
+                }
+                if (!targetPaymentId && input.payment_session_id && query) {
+                    const { data: sessions } = await query.graph({
+                        entity: "payment_session",
+                        fields: ["payment_collection.payments.id"],
+                        filters: { id: input.payment_session_id }
+                    });
+                    targetPaymentId = sessions?.[0]?.payment_collection?.payments?.[0]?.id;
+                }
 
-                  // ESTRATEGIA B: Por Payment Session ID
-                  if (!targetPaymentId && input.payment_session_id && query) {
-                      const { data: sessions } = await query.graph({
-                          entity: "payment_session",
-                          fields: ["payment_collection.payments.id"],
-                          filters: { id: input.payment_session_id }
-                      });
-                      targetPaymentId = sessions?.[0]?.payment_collection?.payments?.[0]?.id;
-                  }
+                // 🔥 AQUÍ ESTÁ EL CAMBIO CLAVE 🔥
+                if (targetPaymentId) {
+                     this.logger_.info(`🔧 [MP-FIX] Corrigiendo BD -> ID: ${targetPaymentId}`);
+                     
+                     await paymentModule.updatePayments({
+                         id: targetPaymentId,
+                         amount: finalAmount,          // Autorizado
+                         captured_amount: finalAmount, // 👈 ¡ESTO FALTABA! (Capturado real)
+                         captured_at: new Date()       // Fecha de captura
+                     });
+                     
+                     this.logger_.info(`✅ [MP-FIX] Base de datos sincronizada (Auth + Captured).`);
+                } else {
+                    this.logger_.warn(`⚠️ [MP-FIX] FALLÓ: No se encontró Payment ID.`);
+                }
+            }
+        } catch (dbError: any) {
+            this.logger_.error(`🔥 [MP-FIX-ERROR] Falló corrección en BD: ${dbError.message}`);
+        }
+    }
 
-                  // ACTUALIZACIÓN
-                  if (targetPaymentId) {
-                       this.logger_.info(`🔧 [MP-FIX] Update forzado en BD -> ID: ${targetPaymentId} | Monto: $${finalAmount}`);
-                       
-                       await paymentModule.updatePayments({
-                           id: targetPaymentId,
-                           amount: finalAmount
-                       });
-                       
-                       this.logger_.info(`✅ [MP-FIX] Base de datos corregida.`);
-                  } else {
-                      this.logger_.warn(`⚠️ [MP-FIX] FALLÓ: No se encontró Payment ID.`);
-                  }
-              }
-          } catch (dbError: any) {
-              this.logger_.error(`🔥 [MP-FIX-ERROR] Falló corrección en BD: ${dbError.message}`);
-          }
-      }
-
-      return {
-          ...sessionData,
-          status: 'captured',
-          amount_captured: finalAmount,
-          mp_capture_timestamp: new Date().toISOString()
-      }; 
-  }
+    return {
+        ...sessionData,
+        status: 'captured',
+        amount_captured: finalAmount,
+        mp_capture_timestamp: new Date().toISOString()
+    }; 
+}
 
   // -------------------------------------------------------------------
   // 4. CANCELAR
