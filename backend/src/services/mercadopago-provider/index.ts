@@ -8,6 +8,7 @@ import {
   WebhookActionResult 
 } from "@medusajs/framework/types";
 import { MercadoPagoConfig, Preference, Payment, PaymentRefund } from 'mercadopago';
+import { Client } from 'pg'; // 👈 IMPORTANTE: Usamos el cliente directo de Postgres
 
 type Options = {
   access_token: string;
@@ -24,10 +25,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   protected logger_: Logger;
   protected mercadoPagoConfig: MercadoPagoConfig;
   
-  // 🔌 CONEXIÓN DIRECTA A BASE DE DATOS (NUCLEAR OPTION)
-  protected dbConnection_: any; // Knex instance
-  protected query_: any;
-
+  // Ya no inyectamos nada raro en el constructor para no romper el servidor
   constructor(container: any, options: Options) {
     super(container, options); 
     this.options_ = options;
@@ -35,27 +33,11 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     this.mercadoPagoConfig = new MercadoPagoConfig({
       accessToken: options.access_token,
     });
-
-    this.logger_.info("🏗️ [MP-CONSTRUCTOR] Iniciando inyección de servicios...");
-
-    // 1. Intentamos obtener la conexión directa (pg_connection es estándar en Medusa)
-    try {
-        this.dbConnection_ = container.resolve("pg_connection");
-        this.logger_.info(`✅ [MP-CONSTRUCTOR] DB Connection (Knex) cargada: ${!!this.dbConnection_}`);
-    } catch (e) {
-        this.logger_.warn(`⚠️ [MP-CONSTRUCTOR] No se pudo cargar pg_connection. Intentando fallback...`);
-    }
-
-    // 2. Query para búsquedas (Solo lectura, no suele dar problemas circulares)
-    try {
-        this.query_ = container.resolve("query"); 
-        this.logger_.info(`✅ [MP-CONSTRUCTOR] Query Module cargado.`);
-    } catch (e) {
-        this.logger_.error(`❌ [MP-CONSTRUCTOR] Falló carga de Query Module: ${e}`);
-    }
   }
 
-  // ... (MÉTODOS INITIATE Y AUTHORIZE SIN CAMBIOS) ...
+  // -------------------------------------------------------------------
+  // 1. INICIAR PAGO (Sin cambios)
+  // -------------------------------------------------------------------
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
     let resource_id = input.data?.session_id || input.id || input.resource_id;
     if (!resource_id) resource_id = `fallback_${Date.now()}`;
@@ -88,6 +70,9 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     } catch (error: any) { this.logger_.error(`🔥 [MP-ERROR]: ${error.message}`); throw error; }
   }
 
+  // -------------------------------------------------------------------
+  // 2. AUTORIZAR (Sin cambios)
+  // -------------------------------------------------------------------
   async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
     const inputData = paymentSessionData as any;
     const cleanData = inputData.data || inputData.session_data || inputData;
@@ -114,72 +99,68 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (VERSIÓN NUCLEAR: KNEX / SQL UPDATE)
+  // 3. CAPTURAR (VERSIÓN FRANCOTIRADOR SQL - PG CLIENT DIRECTO)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
-      
-      this.logger_.info(`🔍 [MP-CAPTURE-DEBUG] Keys: ${Object.keys(input).join(', ')}`);
+      this.logger_.info(`🔍 [MP-CAPTURE] Keys: ${Object.keys(input).join(', ')}`);
 
       // 1. Recuperar monto
       let amountToCapture = input.amount;
       if (!amountToCapture && sessionData.transaction_amount) {
           amountToCapture = sessionData.transaction_amount;
-          this.logger_.info(`💡 [MP-CAPTURE] Input vacío. Usando sesión: $${amountToCapture}`);
+          this.logger_.info(`💡 [MP-CAPTURE] Input vacío. Recuperado: $${amountToCapture}`);
       }
       
       const finalAmount = Number(amountToCapture);
-      this.logger_.info(`⚡ [MP-CAPTURE] Procesando captura: $${finalAmount}`);
+      this.logger_.info(`⚡ [MP-CAPTURE] Procesando: $${finalAmount}`);
 
-      // 2. BYPASS A LA BASE DE DATOS (Usando Knex Directo)
-      // Si tenemos conexión a DB y el monto es > 0, forzamos la escritura
-      if (!input.amount && finalAmount > 0 && this.dbConnection_) {
+      // 2. CONEXIÓN DIRECTA A POSTGRES (Bypass total de Medusa Container)
+      if (!input.amount && finalAmount > 0) {
           try {
-              let targetPaymentId = input.payment_id || input.id;
+             // Buscamos el ID
+             let targetPaymentId = input.payment_id || input.id;
+             
+             // Si no viene el ID, conectamos a la BD para buscarlo
+             if (process.env.DATABASE_URL) {
+                 const client = new Client({ connectionString: process.env.DATABASE_URL });
+                 await client.connect();
+                 
+                 try {
+                     // A. Búsqueda por Collection ID si hace falta
+                     if (!targetPaymentId) {
+                         const collectionId = input.payment_collection_id || input.payment_session?.payment_collection_id;
+                         if (collectionId) {
+                             const res = await client.query('SELECT id FROM payment WHERE payment_collection_id = $1 LIMIT 1', [collectionId]);
+                             if (res.rows.length > 0) targetPaymentId = res.rows[0].id;
+                         }
+                     }
 
-              // BÚSQUEDA DEL ID (Si no viene directo)
-              if (!targetPaymentId && this.query_) {
-                  const collectionId = input.payment_collection_id || input.payment_session?.payment_collection_id;
-                  if (collectionId) {
-                      const { data: payments } = await this.query_.graph({
-                          entity: "payment",
-                          fields: ["id"],
-                          filters: { payment_collection_id: collectionId }
-                      });
-                      if (payments?.length > 0) targetPaymentId = payments[0].id;
-                  }
-              }
-
-              if (targetPaymentId) {
-                   this.logger_.info(`🔧 [MP-NUCLEAR] Ejecutando SQL UPDATE directo en tabla 'payment' ID: ${targetPaymentId}`);
-                   
-                   // KNEX UPDATE: Esto escribe directo en Postgres, saltándose todos los bloqueos de Medusa
-                   // Intentamos actualizar la tabla 'payment' (nombre estándar en Medusa)
-                   await this.dbConnection_('payment')
-                       .where({ id: targetPaymentId })
-                       .update({
-                           amount: finalAmount,
-                           captured_amount: finalAmount, // 👈 ESTO HABILITA EL REFUND
-                           captured_at: new Date()
-                       });
-                   
-                   this.logger_.info(`✅ [MP-NUCLEAR] Base de datos hackeada con éxito. Saldo actualizado.`);
-              } else {
-                  this.logger_.warn(`⚠️ [MP-NUCLEAR] FALLÓ: No se encontró Payment ID.`);
-              }
+                     // B. UPDATE NUCLEAR
+                     if (targetPaymentId) {
+                         this.logger_.info(`🔧 [MP-PG] Ejecutando UPDATE crudo en Payment ID: ${targetPaymentId}`);
+                         
+                         // Actualizamos amount, captured_amount y captured_at
+                         // IMPORTANTE: Ajustamos para que Medusa vea la plata
+                         const updateQuery = `
+                             UPDATE payment 
+                             SET amount = $1, captured_amount = $1, captured_at = NOW() 
+                             WHERE id = $2
+                         `;
+                         await client.query(updateQuery, [finalAmount, targetPaymentId]);
+                         
+                         this.logger_.info(`✅ [MP-PG] Base de datos actualizada directamente.`);
+                     } else {
+                         this.logger_.warn(`⚠️ [MP-PG] No se encontró Payment ID para actualizar.`);
+                     }
+                 } finally {
+                     await client.end(); // Cerramos la conexión pase lo que pase
+                 }
+             } else {
+                 this.logger_.error(`❌ [MP-PG] No hay DATABASE_URL en variables de entorno.`);
+             }
           } catch (dbError: any) {
-              this.logger_.error(`🔥 [MP-NUCLEAR-ERROR] Falló SQL Update: ${dbError.message}`);
-              // Si falla 'payment', intenta 'payment_payment' (a veces cambia según la versión)
-              try {
-                  this.logger_.info(`🔧 [MP-NUCLEAR] Intentando tabla alternativa 'payment_payment'...`);
-                  let targetPaymentId = input.payment_id || input.id; // Recalcular si es necesario
-                  if (targetPaymentId) {
-                      await this.dbConnection_('payment_payment')
-                         .where({ id: targetPaymentId })
-                         .update({ amount: finalAmount, captured_amount: finalAmount, captured_at: new Date() });
-                      this.logger_.info(`✅ [MP-NUCLEAR] Éxito en tabla alternativa.`);
-                  }
-              } catch (e2) {}
+              this.logger_.error(`🔥 [MP-PG-ERROR] Falló conexión directa: ${dbError.message}`);
           }
       }
 
@@ -191,7 +172,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       }; 
   }
 
-  // ... (MÉTODOS CANCEL Y REFUND SIN CAMBIOS) ...
+  // ... (RESTO SIN CAMBIOS) ...
   async cancelPayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
       const paymentId = sessionData.mp_payment_id;
