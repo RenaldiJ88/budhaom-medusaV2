@@ -149,24 +149,21 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (MEJORADO: Búsqueda profunda de ID)
+  // 3. CAPTURAR (VERSIÓN FINAL: BUSCADOR INTELIGENTE)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
     const sessionData = input.session_data || input.data || {};
     this.logger_.info(`🔍 [MP-CAPTURE] Iniciando captura...`);
     
-    // LOG DE DEBUG PARA VER QUÉ LLEGA EXACTAMENTE
-    console.log("🔍 [MP-DEBUG-CAPTURE] Input keys:", Object.keys(input));
-    if (input.id) console.log("🔍 [MP-DEBUG-CAPTURE] input.id:", input.id);
-    if (input.payment_id) console.log("🔍 [MP-DEBUG-CAPTURE] input.payment_id:", input.payment_id);
-
+    // 1. Extraemos los IDs candidatos desde donde sea que estén
+    const externalId = sessionData.mp_payment_id || input.mp_payment_id; // ID de MercadoPago (1325...)
+    const resourceId = sessionData.resource_id || input.resource_id;     // ID de Sesión (payses_...)
+    
     let amountToCapture = input.amount;
     if (!amountToCapture && sessionData.transaction_amount) amountToCapture = sessionData.transaction_amount;
-    
-    // Sanitización del monto
     const finalAmount = parseFloat(Number(amountToCapture).toFixed(2));
 
-    // ESTRATEGIA DE BÚSQUEDA DE ID (Más agresiva)
+    // 2. Definimos el ID Objetivo (Si viene directo, lo usamos)
     let targetPaymentId = input.id || input.payment_id; 
 
     if (finalAmount > 0) {
@@ -176,33 +173,67 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
                const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
                await client.connect();
                try {
-                   // Si no tenemos ID directo, buscamos por la colección (el carrito/sesión)
+                   // 3. ESTRATEGIA DE RECUPERACIÓN DE ID (Si no vino directo)
                    if (!targetPaymentId) {
-                       const collectionId = input.payment_collection_id || input.payment_session?.payment_collection_id;
-                       if (collectionId) {
-                           console.log(`🔍 [MP-SQL] Buscando ID por Collection: ${collectionId}`);
-                           const res = await client.query('SELECT id FROM payment WHERE payment_collection_id = $1 LIMIT 1', [collectionId]);
-                           if (res.rows.length > 0) targetPaymentId = res.rows[0].id;
+                       console.log("🔍 [MP-SQL] ID no encontrado en input directo. Buscando en DB...");
+                       
+                       // INTENTO A: Buscar por ID de MercadoPago (El más seguro)
+                       if (externalId) {
+                           const res = await client.query(
+                               "SELECT id FROM payment WHERE data->>'mp_payment_id' = $1 LIMIT 1", 
+                               [String(externalId)]
+                           );
+                           if (res.rows.length > 0) {
+                               targetPaymentId = res.rows[0].id;
+                               console.log(`✅ [MP-SQL] Encontrado por MP_ID: ${targetPaymentId}`);
+                           }
+                       }
+                       
+                       // INTENTO B: Buscar por Resource ID (Session)
+                       if (!targetPaymentId && resourceId) {
+                           // A veces el resource_id se guarda en el campo data
+                           const res = await client.query(
+                               "SELECT id FROM payment WHERE data->>'resource_id' = $1 LIMIT 1", 
+                               [String(resourceId)]
+                           );
+                           if (res.rows.length > 0) {
+                               targetPaymentId = res.rows[0].id;
+                               console.log(`✅ [MP-SQL] Encontrado por ResourceID: ${targetPaymentId}`);
+                           }
+                       }
+
+                       // INTENTO C: Buscar por Collection (Último recurso)
+                       if (!targetPaymentId) {
+                           const collectionId = input.payment_collection_id || input.payment_session?.payment_collection_id;
+                           if (collectionId) {
+                               const res = await client.query('SELECT id FROM payment WHERE payment_collection_id = $1 LIMIT 1', [collectionId]);
+                               if (res.rows.length > 0) targetPaymentId = res.rows[0].id;
+                           }
                        }
                    }
 
+                   // 4. EJECUTAR ACTUALIZACIÓN
                    if (targetPaymentId) {
-                       this.logger_.info(`🔧 [MP-SQL] UPDATE directo en ID: ${targetPaymentId}`);
-                       // Actualizamos el payment para marcarlo como capturado manualmente en la DB
+                       this.logger_.info(`🔧 [MP-SQL] UPDATE directo en Payment ID: ${targetPaymentId}`);
                        const updateQuery = `UPDATE payment SET amount = $1, captured_amount = $1, captured_at = NOW() WHERE id = $2`;
                        await client.query(updateQuery, [finalAmount, targetPaymentId]);
-                       this.logger_.info(`✅ [MP-SQL] Base de datos actualizada correctamente.`);
+                       this.logger_.info(`✅ [MP-SQL] Base de datos actualizada. Estado: CAPTURED.`);
                    } else { 
-                       this.logger_.warn(`⚠️ [MP-SQL] IMPOSIBLE ENCONTRAR PAYMENT ID. La captura en MP se hará, pero la DB local podría desincronizarse.`);
-                       // Imprimimos todo el input para ver qué falta
-                       console.log("⚠️ [MP-DEBUG-FAIL] Input completo:", JSON.stringify(input, null, 2));
+                       this.logger_.warn(`⚠️ [MP-SQL] ERROR CRÍTICO: No se pudo encontrar la fila en la tabla 'payment'.`);
+                       this.logger_.warn(`Datos disponibles - MP_ID: ${externalId}, Res_ID: ${resourceId}`);
                    }
                } finally { await client.end(); }
             } else { this.logger_.error(`❌ [MP-SQL] Falta DATABASE_URL.`); }
         } catch (err: any) { this.logger_.error(`🔥 [MP-SQL-ERROR] DB Error: ${err.message}`); }
     }
     
-    return { ...sessionData, status: 'captured', amount_captured: finalAmount, mp_capture_timestamp: new Date().toISOString() }; 
+    // Retornamos los datos actualizados para que Medusa se entere
+    return { 
+        ...sessionData, 
+        status: 'captured', 
+        amount_captured: finalAmount, 
+        mp_capture_timestamp: new Date().toISOString() 
+    }; 
 }
 
   // 4. CANCELAR
