@@ -387,8 +387,23 @@ async refundPayment(input: any): Promise<SessionData> {
 }
 
 
+  
+  // -------------------------------------------------------------------
+  // 6. OBTENER ESTADO (CORREGIDO: Para permitir Refund)
+  // -------------------------------------------------------------------
+  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { 
+    const data = input.data || input.session_data || input;
+    
+    // Si en la data tenemos el timestamp de captura o el status 'captured'
+    // le decimos a Medusa que ya está cobrado.
+    if (data.mp_capture_timestamp || data.status === 'captured' || data.amount_captured > 0) {
+        return { status: PaymentSessionStatus.CAPTURED };
+    }
+    
+    return { status: PaymentSessionStatus.AUTHORIZED }; 
+}
+  
   async deletePayment(input: any): Promise<SessionData> { return this.cancelPayment(input); }
-  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { return { status: PaymentSessionStatus.AUTHORIZED }; }
   async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { return this.initiatePayment(input); }
   async retrievePayment(input: any): Promise<SessionData> { return input.session_data || input.data || {}; }
   async getWebhookActionAndData(input: any): Promise<WebhookActionResult> { return { action: PaymentActions.NOT_SUPPORTED }; }
