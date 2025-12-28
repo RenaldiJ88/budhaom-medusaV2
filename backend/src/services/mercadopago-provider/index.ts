@@ -32,17 +32,17 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       accessToken: options.access_token,
       options: { timeout: 10000 }
     });
-    console.log("📢 [MP-CONSTRUCTOR] Provider listo (Medusa V2 + Railway + PG Fix).");
+    console.log("📢 [MP-CONSTRUCTOR] Provider listo (Modo Diagnóstico Activado).");
   }
 
   // -------------------------------------------------------------------
-  // 1. INICIAR PAGO - ACÁ ESTABA EL PROBLEMA DE POSTGRES
+  // 1. INICIAR PAGO CON DIAGNÓSTICO INTEGRADO
   // -------------------------------------------------------------------
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
     console.log(`🔥 [MP-INIT] Iniciando...`);
 
     try {
-        // 1. SANITIZACIÓN DE ID: Postgres puede devolver objetos o BigInts. Forzamos String.
+        // --- 1. PREPARACIÓN DE DATOS ---
         let rawId = input.data?.session_id || input.id || input.resource_id;
         const resource_id = rawId ? String(rawId) : `fallback_${Date.now()}`;
         
@@ -54,25 +54,21 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         const backendUrl = (process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000").replace(/\/$/, "");
         const webhookUrl = `${backendUrl}/hooks/mp`;
 
-        // 2. SANITIZACIÓN DE MONTO: Postgres devuelve string "100.00". MP necesita Number 100.
         let rawAmount = input.amount || input.context?.amount;
-        if (!rawAmount) rawAmount = 100; // Fallback por seguridad
+        if (!rawAmount) rawAmount = 100;
         
-        // ParseFloat asegura que si viene "1500.50" (string) pase a 1500.50 (number)
+        // Sanitizar Monto
         const finalAmount = parseFloat(Number(rawAmount).toFixed(2));
-        
         const email = input.email || input.context?.email || "guest@budhaom.com";
 
-        // LOG DE SEGURIDAD: Para ver qué estamos mandando realmente
-        console.log(`🔍 [MP-DEBUG] Enviando -> ID: ${resource_id} | Monto: ${finalAmount} (Type: ${typeof finalAmount})`);
-
+        // Construcción del objeto
         const preferenceData = {
           body: {
             items: [{
                 id: resource_id,
                 title: "Compra en BUDHA.Om",
                 quantity: 1,
-                unit_price: finalAmount, // AHORA ES UN NÚMERO SEGURO
+                unit_price: finalAmount, 
                 currency_id: "ARS",
               }],
             payer: { email: email },
@@ -88,6 +84,167 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             metadata: { original_id: resource_id }
           },
         };
+
+        // ============================================================
+        // 🔍 DIAGNÓSTICO PROFUNDO - COPIADO DEL PROMPT
+        // ============================================================
+
+        // 1. VERIFICACIÓN DE VARIABLES DE ENTORNO
+        console.log("=".repeat(80));
+        console.log("🔍 [MP-DIAGNOSTIC] VERIFICACIÓN DE VARIABLES DE ENTORNO");
+        console.log("=".repeat(80));
+        console.log(`STORE_URL: "${process.env.STORE_URL}" (Type: ${typeof process.env.STORE_URL})`);
+        console.log(`RAILWAY_PUBLIC_DOMAIN: "${process.env.RAILWAY_PUBLIC_DOMAIN}" (Type: ${typeof process.env.RAILWAY_PUBLIC_DOMAIN})`);
+        console.log(`BACKEND_URL: "${process.env.BACKEND_URL}" (Type: ${typeof process.env.BACKEND_URL})`);
+        console.log(`rawStoreUrl (final): "${rawStoreUrl}"`);
+        console.log(`backendUrl (final): "${backendUrl}"`);
+        console.log(`webhookUrl (final): "${webhookUrl}"`);
+        console.log(`baseUrlStr (final): "${baseUrlStr}"`);
+
+        // 2. VALIDACIÓN DE URLs (Detectar undefined/null/vacíos)
+        const urlsToCheck = {
+            'rawStoreUrl': rawStoreUrl,
+            'backendUrl': backendUrl,
+            'webhookUrl': webhookUrl,
+            'baseUrlStr': baseUrlStr,
+            'success_url': `${baseUrlStr}?step=payment&payment_status=success`,
+            'failure_url': `${baseUrlStr}?step=payment&payment_status=failure`,
+            'pending_url': `${baseUrlStr}?step=payment&payment_status=pending`
+        };
+
+        console.log("\n🔍 [MP-DIAGNOSTIC] VALIDACIÓN DE URLs:");
+        for (const [key, value] of Object.entries(urlsToCheck)) {
+            const isValid = value && typeof value === 'string' && value.length > 0 && value !== 'undefined' && value !== 'null';
+            console.log(`  ${key}: ${isValid ? '✅' : '❌'} "${value}"`);
+            if (!isValid) {
+                console.error(`    ⚠️ PROBLEMA DETECTADO: ${key} es inválido!`);
+            }
+        }
+
+        // 3. VALIDACIÓN DE DATOS PRIMITIVOS
+        console.log("\n🔍 [MP-DIAGNOSTIC] VALIDACIÓN DE DATOS:");
+        console.log(`  resource_id: "${resource_id}" (Type: ${typeof resource_id}, Length: ${resource_id?.length})`);
+        console.log(`  finalAmount: ${finalAmount} (Type: ${typeof finalAmount}, IsNaN: ${isNaN(finalAmount)})`);
+        console.log(`  email: "${email}" (Type: ${typeof email})`);
+
+        // 4. FUNCIÓN PARA DETECTAR VALORES PROBLEMÁTICOS EN JSON
+        const detectProblematicValues = (obj: any, path = 'root'): string[] => {
+            const problems: string[] = [];
+            
+            if (obj === null) {
+                problems.push(`${path}: null`);
+            } else if (obj === undefined) {
+                problems.push(`${path}: undefined`);
+            } else if (typeof obj === 'string' && obj === '') {
+                problems.push(`${path}: string vacío`);
+            } else if (typeof obj === 'object') {
+                if (obj instanceof Date) {
+                    problems.push(`${path}: objeto Date (problema de serialización)`);
+                } else if (typeof obj === 'bigint') {
+                    problems.push(`${path}: BigInt (problema de serialización)`);
+                } else if (obj.constructor && obj.constructor.name !== 'Object' && obj.constructor.name !== 'Array') {
+                    problems.push(`${path}: objeto de tipo ${obj.constructor.name} (puede ser problemático)`);
+                } else {
+                    for (const key in obj) {
+                        if (obj.hasOwnProperty(key)) {
+                            problems.push(...detectProblematicValues(obj[key], `${path}.${key}`));
+                        }
+                    }
+                }
+            }
+            return problems;
+        };
+
+        // 5. ANÁLISIS PROFUNDO DEL preferenceData
+        console.log("\n🔍 [MP-DIAGNOSTIC] ANÁLISIS DE preferenceData:");
+        const detectedProblems = detectProblematicValues(preferenceData);
+        if (detectedProblems.length > 0) {
+            console.error("❌ VALORES PROBLEMÁTICOS DETECTADOS:");
+            detectedProblems.forEach(problem => console.error(`  - ${problem}`));
+        } else {
+            console.log("✅ No se detectaron valores null/undefined/objetos complejos");
+        }
+
+        // 6. JSON STRINGIFY CON REPLACER PARA DETECTAR PROBLEMAS
+        const jsonReplacer = (key: string, value: any): any => {
+            if (value === undefined) {
+                console.error(`⚠️ [JSON-REPLACER] undefined detectado en key: ${key}`);
+                return '[UNDEFINED]'; 
+            }
+            if (value === null) {
+                console.warn(`⚠️ [JSON-REPLACER] null detectado en key: ${key}`);
+            }
+            if (typeof value === 'bigint') {
+                console.error(`⚠️ [JSON-REPLACER] BigInt detectado en key: ${key}, valor: ${value}`);
+                return value.toString();
+            }
+            if (value instanceof Date) {
+                console.warn(`⚠️ [JSON-REPLACER] Date detectado en key: ${key}, valor: ${value.toISOString()}`);
+                return value.toISOString();
+            }
+            return value;
+        };
+
+        // 7. INTENTAR SERIALIZAR EL JSON
+        console.log("\n🔍 [MP-DIAGNOSTIC] INTENTANDO SERIALIZAR JSON:");
+        try {
+            const jsonString = JSON.stringify(preferenceData, jsonReplacer, 2);
+            console.log("✅ JSON serializado exitosamente");
+            console.log("\n" + "=".repeat(80));
+            console.log("📄 [MP-DIAGNOSTIC] JSON COMPLETO QUE SE ENVÍA A MERCADOPAGO:");
+            console.log("=".repeat(80));
+            console.log(jsonString);
+            console.log("=".repeat(80));
+            
+            const jsonSize = Buffer.byteLength(jsonString, 'utf8');
+            console.log(`📊 Tamaño del JSON: ${jsonSize} bytes (Límite MP: ~10KB)`);
+            if (jsonSize > 10000) {
+                console.error("❌ PROBLEMA: JSON demasiado grande!");
+            }
+            
+        } catch (jsonError: any) {
+            console.error("❌ ERROR AL SERIALIZAR JSON:");
+            console.error(jsonError.message);
+            console.error(jsonError.stack);
+        }
+
+        // 9. VALIDACIÓN ESPECÍFICA DE CAMPOS CRÍTICOS
+        console.log("\n🔍 [MP-DIAGNOSTIC] VALIDACIÓN DE CAMPOS CRÍTICOS:");
+        // Nota: Acceso seguro con ? para evitar crash si falta estructura
+        const items = preferenceData.body.items || [];
+        const firstItem = items[0] || {} as any;
+        const payer = preferenceData.body.payer || {} as any;
+        const backUrls = preferenceData.body.back_urls || {} as any;
+        const metadata = preferenceData.body.metadata || {} as any;
+
+        const criticalFields = {
+            'items[0].id': firstItem.id,
+            'items[0].title': firstItem.title,
+            'items[0].quantity': firstItem.quantity,
+            'items[0].unit_price': firstItem.unit_price,
+            'items[0].currency_id': firstItem.currency_id,
+            'payer.email': payer.email,
+            'external_reference': preferenceData.body.external_reference,
+            'notification_url': preferenceData.body.notification_url,
+            'back_urls.success': backUrls.success,
+            'back_urls.failure': backUrls.failure,
+            'back_urls.pending': backUrls.pending,
+            'metadata.original_id': metadata.original_id
+        };
+
+        for (const [field, value] of Object.entries(criticalFields)) {
+            const isValid = value !== undefined && value !== null && value !== '';
+            const type = typeof value;
+            console.log(`  ${field}: ${isValid ? '✅' : '❌'} "${value}" (${type})`);
+        }
+
+        console.log("\n" + "=".repeat(80));
+        console.log("🔍 [MP-DIAGNOSTIC] FIN DEL DIAGNÓSTICO");
+        console.log("=".repeat(80) + "\n");
+
+        // ============================================================
+        // FIN DEL BLOQUE DE DIAGNÓSTICO
+        // ============================================================
 
         const preference = new Preference(this.mercadoPagoConfig);
         const response = await preference.create(preferenceData);
@@ -113,7 +270,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         };
     } catch (error: any) {
         this.logger_.error(`🔥 [MP-ERROR-INIT]: ${error.message}`);
-        console.error(error); // Ver el error crudo en consola de Railway
+        console.error(error); 
         throw error;
     }
   }
@@ -124,8 +281,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
     const inputData = paymentSessionData as any;
     const cleanData = inputData.data || inputData.session_data || inputData;
-    
-    // Sanitización extra por si acaso
     const resourceId = cleanData.resource_id ? String(cleanData.resource_id) : (cleanData.id || cleanData.session_id);
     const paymentId = cleanData.mp_payment_id || inputData.mp_payment_id;
 
@@ -147,15 +302,13 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (SQL Directo a Postgres)
+  // 3. CAPTURAR (Directo a PG para robustez)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
       this.logger_.info(`🔍 [MP-CAPTURE] Iniciando captura...`);
       let amountToCapture = input.amount;
       if (!amountToCapture && sessionData.transaction_amount) amountToCapture = sessionData.transaction_amount;
-      
-      // Sanitización monto captura
       const finalAmount = parseFloat(Number(amountToCapture).toFixed(2));
 
       if (!input.amount && finalAmount > 0) {
@@ -209,7 +362,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     if (refundAmount === undefined && input.context?.amount) refundAmount = input.context.amount;
     if (!paymentId) throw new Error("Falta mp_payment_id");
     
-    // Sanitización monto reembolso
     const finalAmount = parseFloat(Number(refundAmount).toFixed(2));
     const effectiveAmount = (finalAmount > 0) ? finalAmount : Number(sessionData.transaction_amount);
 
