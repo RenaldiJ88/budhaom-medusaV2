@@ -9,10 +9,6 @@ import {
 } from "@medusajs/framework/types";
 import { MercadoPagoConfig, Preference, Payment, PaymentRefund } from 'mercadopago';
 
-// ------------------------------------------------------------------
-// ZONA SEGURA: Importación dinámica de PG para evitar crashes
-// ------------------------------------------------------------------
-
 type Options = {
   access_token: string;
   public_key?: string;
@@ -34,28 +30,41 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     this.logger_ = container.logger;
     this.mercadoPagoConfig = new MercadoPagoConfig({
       accessToken: options.access_token,
+      options: { timeout: 10000 }
     });
-    console.log("📢 [MP-CONSTRUCTOR] Provider listo (Arquitectura Limpia).");
+    console.log("📢 [MP-CONSTRUCTOR] Provider listo (Medusa V2 + Railway + PG Fix).");
   }
 
   // -------------------------------------------------------------------
-  // 1. INICIAR PAGO (LÓGICA AUTOMÁTICA DE CURSOR)
+  // 1. INICIAR PAGO - ACÁ ESTABA EL PROBLEMA DE POSTGRES
   // -------------------------------------------------------------------
   async initiatePayment(input: any): Promise<{ id: string, data: SessionData }> {
     console.log(`🔥 [MP-INIT] Iniciando...`);
 
     try {
-        let resource_id = input.data?.session_id || input.id || input.resource_id;
-        if (!resource_id) resource_id = `fallback_${Date.now()}`;
+        // 1. SANITIZACIÓN DE ID: Postgres puede devolver objetos o BigInts. Forzamos String.
+        let rawId = input.data?.session_id || input.id || input.resource_id;
+        const resource_id = rawId ? String(rawId) : `fallback_${Date.now()}`;
         
         let rawStoreUrl = process.env.STORE_URL || this.options_.store_url || "http://localhost:8000";
         if (rawStoreUrl.endsWith("/")) rawStoreUrl = rawStoreUrl.slice(0, -1);
         const baseUrlStr = `${rawStoreUrl}/checkout`;
-        const webhookUrl = `${(process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000").replace(/\/$/, "")}/hooks/mp`;
+        
+        // Ajustá esto a tu dominio real de Railway si es necesario
+        const backendUrl = (process.env.RAILWAY_PUBLIC_DOMAIN || process.env.BACKEND_URL || "http://localhost:9000").replace(/\/$/, "");
+        const webhookUrl = `${backendUrl}/hooks/mp`;
 
-        let amount = input.amount || input.context?.amount;
-        if (!amount) amount = 100;
+        // 2. SANITIZACIÓN DE MONTO: Postgres devuelve string "100.00". MP necesita Number 100.
+        let rawAmount = input.amount || input.context?.amount;
+        if (!rawAmount) rawAmount = 100; // Fallback por seguridad
+        
+        // ParseFloat asegura que si viene "1500.50" (string) pase a 1500.50 (number)
+        const finalAmount = parseFloat(Number(rawAmount).toFixed(2));
+        
         const email = input.email || input.context?.email || "guest@budhaom.com";
+
+        // LOG DE SEGURIDAD: Para ver qué estamos mandando realmente
+        console.log(`🔍 [MP-DEBUG] Enviando -> ID: ${resource_id} | Monto: ${finalAmount} (Type: ${typeof finalAmount})`);
 
         const preferenceData = {
           body: {
@@ -63,7 +72,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
                 id: resource_id,
                 title: "Compra en BUDHA.Om",
                 quantity: 1,
-                unit_price: Number(amount),
+                unit_price: finalAmount, // AHORA ES UN NÚMERO SEGURO
                 currency_id: "ARS",
               }],
             payer: { email: email },
@@ -85,9 +94,6 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
         
         if (!response.id) throw new Error("Mercado Pago no devolvió ID");
 
-        // --- 🧠 LÓGICA INTELIGENTE (SUGERIDA POR CURSOR) ---
-        // Si existe sandbox_init_point, ES TEST. Si no, ES PROD.
-        // Priorizamos Sandbox si existe para evitar el error "Oh no".
         const redirectUrl = response.sandbox_init_point || response.init_point;
         
         console.log(`🔥 [MP-DEBUG] URL Sandbox disponible: ${!!response.sandbox_init_point}`);
@@ -97,35 +103,32 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
             id: response.id!,
             data: {
                 id: response.id!,
-                // TRUCO MAESTRO: Sobreescribimos init_point con la URL ganadora
-                // Así el Frontend usa la correcta sin saberlo.
                 init_point: redirectUrl!, 
-                
-                // Guardamos los originales por si acaso
                 original_init_point: response.init_point,
                 sandbox_init_point: response.sandbox_init_point,
-                
-                // Campo nuevo sugerido (para futuro frontend update)
                 redirect_url: redirectUrl!,
-                
                 resource_id: resource_id,
-                transaction_amount: amount
+                transaction_amount: finalAmount
             },
         };
     } catch (error: any) {
         this.logger_.error(`🔥 [MP-ERROR-INIT]: ${error.message}`);
+        console.error(error); // Ver el error crudo en consola de Railway
         throw error;
     }
   }
 
   // -------------------------------------------------------------------
-  // 2. AUTORIZAR (Sin cambios)
+  // 2. AUTORIZAR
   // -------------------------------------------------------------------
   async authorizePayment(paymentSessionData: SessionData): Promise<{ status: PaymentSessionStatus; data: SessionData; }> { 
     const inputData = paymentSessionData as any;
     const cleanData = inputData.data || inputData.session_data || inputData;
-    const resourceId = cleanData.resource_id || cleanData.id || cleanData.session_id || inputData.id;
+    
+    // Sanitización extra por si acaso
+    const resourceId = cleanData.resource_id ? String(cleanData.resource_id) : (cleanData.id || cleanData.session_id);
     const paymentId = cleanData.mp_payment_id || inputData.mp_payment_id;
+
     if (!resourceId && !paymentId) return { status: PaymentSessionStatus.PENDING, data: paymentSessionData };
     try {
       const payment = new Payment(this.mercadoPagoConfig);
@@ -144,18 +147,19 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR (MANTENEMOS EL SQL DIRECTO - ES ROBUSTO)
+  // 3. CAPTURAR (SQL Directo a Postgres)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
       const sessionData = input.session_data || input.data || {};
       this.logger_.info(`🔍 [MP-CAPTURE] Iniciando captura...`);
       let amountToCapture = input.amount;
       if (!amountToCapture && sessionData.transaction_amount) amountToCapture = sessionData.transaction_amount;
-      const finalAmount = Number(amountToCapture);
+      
+      // Sanitización monto captura
+      const finalAmount = parseFloat(Number(amountToCapture).toFixed(2));
 
       if (!input.amount && finalAmount > 0) {
           try {
-              // Importación dinámica segura
               const { Client } = require('pg'); 
               if (process.env.DATABASE_URL) {
                  const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
@@ -204,7 +208,9 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     let refundAmount = input.amount;
     if (refundAmount === undefined && input.context?.amount) refundAmount = input.context.amount;
     if (!paymentId) throw new Error("Falta mp_payment_id");
-    const finalAmount = Number(refundAmount);
+    
+    // Sanitización monto reembolso
+    const finalAmount = parseFloat(Number(refundAmount).toFixed(2));
     const effectiveAmount = (finalAmount > 0) ? finalAmount : Number(sessionData.transaction_amount);
 
     try {
