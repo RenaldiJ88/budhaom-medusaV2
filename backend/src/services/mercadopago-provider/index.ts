@@ -389,23 +389,190 @@ async refundPayment(input: any): Promise<SessionData> {
 
   
   // -------------------------------------------------------------------
-  // 6. OBTENER ESTADO (CORREGIDO: Para permitir Refund)
+// 6. OBTENER ESTADO (CORREGIDO: Consulta BD real)
+// -------------------------------------------------------------------
+async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> {
+  this.logger_.info(`🔍 [MP-STATUS] Consultando estado real desde BD...`);
+  
+  try {
+      // Reutilizar retrievePayment para obtener datos frescos
+      const freshData = await this.retrievePayment(input);
+      
+      // Determinar el estado basado en los datos de BD
+      if (freshData.status === 'captured' || freshData.captured_at || freshData.mp_capture_timestamp) {
+          this.logger_.info(`✅ [MP-STATUS] Estado: CAPTURED (confirmado por BD)`);
+          return { status: PaymentSessionStatus.CAPTURED };
+      }
+      
+      if (freshData.status === 'authorized' || freshData.mp_payment_id) {
+          this.logger_.info(`✅ [MP-STATUS] Estado: AUTHORIZED (confirmado por BD)`);
+          return { status: PaymentSessionStatus.AUTHORIZED };
+      }
+      
+      // Fallback: revisar datos del input original como última opción
+      const inputData = input.data || input.session_data || input;
+      if (inputData.mp_capture_timestamp || inputData.status === 'captured' || inputData.amount_captured > 0) {
+          this.logger_.warn(`⚠️ [MP-STATUS] Usando datos del input (BD no disponible). Estado: CAPTURED`);
+          return { status: PaymentSessionStatus.CAPTURED };
+      }
+      
+      this.logger_.info(`✅ [MP-STATUS] Estado: AUTHORIZED (por defecto)`);
+      return { status: PaymentSessionStatus.AUTHORIZED };
+      
+  } catch (error: any) {
+      this.logger_.error(`🔥 [MP-STATUS-ERROR] Error obteniendo estado: ${error.message}`);
+      // Fallback seguro: retornar AUTHORIZED si hay error
+      return { status: PaymentSessionStatus.AUTHORIZED };
+  }
+}
+
+// -------------------------------------------------------------------
+  // 7. OBTENER PAGO (CORREGIDO: Consulta BD + Fix TypeScript)
   // -------------------------------------------------------------------
-  async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { 
-    const data = input.data || input.session_data || input;
+  async retrievePayment(input: any): Promise<SessionData> {
+    this.logger_.info(`🔍 [MP-RETRIEVE] Consultando estado real desde BD...`);
     
-    // Si en la data tenemos el timestamp de captura o el status 'captured'
-    // le decimos a Medusa que ya está cobrado.
-    if (data.mp_capture_timestamp || data.status === 'captured' || data.amount_captured > 0) {
-        return { status: PaymentSessionStatus.CAPTURED };
+    try {
+        const { Client } = require('pg');
+        
+        if (!process.env.DATABASE_URL) {
+            this.logger_.warn(`⚠️ [MP-RETRIEVE] DATABASE_URL no disponible. Retornando datos del input.`);
+            return input.session_data || input.data || {};
+        }
+        
+        const client = new Client({ 
+            connectionString: process.env.DATABASE_URL, 
+            ssl: { rejectUnauthorized: false } 
+        });
+        
+        await client.connect();
+        
+        try {
+            // ESTRATEGIA 1: Buscar por payment.id directo
+            let paymentId = input.id || input.payment_id || input.payment?.id;
+            
+            // ESTRATEGIA 2: Buscar por payment_collection_id
+            if (!paymentId) {
+                const collectionId = input.payment_collection_id || 
+                                     input.payment_collection?.id ||
+                                     input.payment_session?.payment_collection_id;
+                if (collectionId) {
+                    const res = await client.query(
+                        'SELECT id FROM payment WHERE payment_collection_id = $1 LIMIT 1',
+                        [collectionId]
+                    );
+                    if (res.rows.length > 0) {
+                        paymentId = res.rows[0].id;
+                        this.logger_.info(`✅ [MP-RETRIEVE] Payment ID encontrado por collection_id: ${paymentId}`);
+                    }
+                }
+            }
+            
+            // ESTRATEGIA 3: Buscar por mp_payment_id en data
+            if (!paymentId) {
+                const sessionData = input.session_data || input.data || {};
+                const mpPaymentId = sessionData.mp_payment_id || input.mp_payment_id;
+                if (mpPaymentId) {
+                    const res = await client.query(
+                        "SELECT id FROM payment WHERE data->>'mp_payment_id' = $1 LIMIT 1",
+                        [String(mpPaymentId)]
+                    );
+                    if (res.rows.length > 0) {
+                        paymentId = res.rows[0].id;
+                        this.logger_.info(`✅ [MP-RETRIEVE] Payment ID encontrado por mp_payment_id: ${paymentId}`);
+                    }
+                }
+            }
+            
+            // ESTRATEGIA 4: Buscar por resource_id en data
+            if (!paymentId) {
+                const sessionData = input.session_data || input.data || {};
+                const resourceId = sessionData.resource_id || input.resource_id;
+                if (resourceId) {
+                    const res = await client.query(
+                        "SELECT id FROM payment WHERE data->>'resource_id' = $1 LIMIT 1",
+                        [String(resourceId)]
+                    );
+                    if (res.rows.length > 0) {
+                        paymentId = res.rows[0].id;
+                        this.logger_.info(`✅ [MP-RETRIEVE] Payment ID encontrado por resource_id: ${paymentId}`);
+                    }
+                }
+            }
+            
+            if (!paymentId) {
+                this.logger_.warn(`⚠️ [MP-RETRIEVE] No se pudo encontrar payment ID. Retornando datos del input.`);
+                return input.session_data || input.data || {};
+            }
+            
+            // CONSULTA PRINCIPAL: Obtener datos frescos de la BD
+            const queryResult = await client.query(
+                `SELECT 
+                    id,
+                    amount,
+                    captured_at,
+                    data,
+                    created_at,
+                    updated_at
+                 FROM payment 
+                 WHERE id = $1 
+                 LIMIT 1`,
+                [paymentId]
+            );
+            
+            if (queryResult.rows.length === 0) {
+                this.logger_.warn(`⚠️ [MP-RETRIEVE] Payment ${paymentId} no encontrado en BD. Retornando datos del input.`);
+                return input.session_data || input.data || {};
+            }
+            
+            const dbRow = queryResult.rows[0];
+            
+            // 🔥 CORRECCIÓN TS: Usamos 'any' para evitar el error de propiedades inexistentes
+            let paymentData: any = {}; 
+            try {
+                paymentData = typeof dbRow.data === 'string' ? JSON.parse(dbRow.data) : (dbRow.data || {});
+            } catch (e) {
+                this.logger_.warn(`⚠️ [MP-RETRIEVE] Error parseando data JSONB: ${e}`);
+                paymentData = {};
+            }
+            
+            // Determinar el estado basado en captured_at
+            const isCaptured = !!dbRow.captured_at;
+            
+            // Construir el objeto de retorno con datos frescos de BD
+            const freshData: SessionData = {
+                ...paymentData, // Mantener todos los datos existentes en data
+                id: dbRow.id,
+                amount: dbRow.amount,
+                transaction_amount: dbRow.amount, // Alias para compatibilidad
+                mp_payment_id: paymentData.mp_payment_id || null, // Ahora TS no se queja
+                resource_id: paymentData.resource_id || null,     // Ahora TS no se queja
+                status: isCaptured ? 'captured' : 'authorized',
+                captured_at: dbRow.captured_at ? dbRow.captured_at.toISOString() : null,
+                mp_capture_timestamp: dbRow.captured_at ? dbRow.captured_at.toISOString() : null,
+                amount_captured: isCaptured ? dbRow.amount : null,
+                created_at: dbRow.created_at?.toISOString(),
+                updated_at: dbRow.updated_at?.toISOString()
+            };
+            
+            this.logger_.info(`✅ [MP-RETRIEVE] Datos frescos obtenidos. Estado: ${freshData.status}, mp_payment_id: ${freshData.mp_payment_id}`);
+            
+            return freshData;
+            
+        } finally {
+            await client.end();
+        }
+        
+    } catch (error: any) {
+        this.logger_.error(`🔥 [MP-RETRIEVE-ERROR] Error consultando BD: ${error.message}`);
+        // En caso de error, retornar datos del input como fallback
+        return input.session_data || input.data || {};
     }
-    
-    return { status: PaymentSessionStatus.AUTHORIZED }; 
 }
   
   async deletePayment(input: any): Promise<SessionData> { return this.cancelPayment(input); }
   async updatePayment(input: any): Promise<{ id: string, data: SessionData }> { return this.initiatePayment(input); }
-  async retrievePayment(input: any): Promise<SessionData> { return input.session_data || input.data || {}; }
+
   async getWebhookActionAndData(input: any): Promise<WebhookActionResult> { return { action: PaymentActions.NOT_SUPPORTED }; }
 }
 
