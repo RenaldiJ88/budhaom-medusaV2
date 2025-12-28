@@ -148,94 +148,92 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     } catch (err: any) { this.logger_.error(`🔥 [MP-AUTH-ERROR] ${err.message}`); return { status: PaymentSessionStatus.ERROR, data: paymentSessionData }; }
   }
 // -------------------------------------------------------------------
-// 3. CAPTURAR (SQL CORREGIDO: Guarda mp_payment_id en data)
-// -------------------------------------------------------------------
-async capturePayment(input: any): Promise<SessionData> { 
-  const sessionData = input.session_data || input.data || {};
-  this.logger_.info(`🔍 [MP-CAPTURE] Iniciando captura...`);
-  
-  const externalId = sessionData.mp_payment_id || input.mp_payment_id; 
-  const resourceId = sessionData.resource_id || input.resource_id;     
-  
-  let amountToCapture = input.amount;
-  if (!amountToCapture && sessionData.transaction_amount) amountToCapture = sessionData.transaction_amount;
-  const finalAmount = parseFloat(Number(amountToCapture).toFixed(2));
+  // 3. CAPTURAR (SQL CORREGIDO: Casting explícito de tipos)
+  // -------------------------------------------------------------------
+  async capturePayment(input: any): Promise<SessionData> { 
+    const sessionData = input.session_data || input.data || {};
+    this.logger_.info(`🔍 [MP-CAPTURE] Iniciando captura...`);
+    
+    const externalId = sessionData.mp_payment_id || input.mp_payment_id; 
+    const resourceId = sessionData.resource_id || input.resource_id;     
+    
+    let amountToCapture = input.amount;
+    if (!amountToCapture && sessionData.transaction_amount) amountToCapture = sessionData.transaction_amount;
+    const finalAmount = parseFloat(Number(amountToCapture).toFixed(2));
 
-  let targetPaymentId = input.id || input.payment_id; 
+    let targetPaymentId = input.id || input.payment_id; 
 
-  if (finalAmount > 0) {
-      try {
-          const { Client } = require('pg'); 
-          if (process.env.DATABASE_URL) {
-             const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-             await client.connect();
-             try {
-                 // BÚSQUEDA DEL PAYMENT ID (igual que antes)
-                 if (!targetPaymentId) {
-                     console.log("🔍 [MP-SQL] ID no encontrado en input directo. Buscando en DB...");
-                     
-                     if (externalId) {
-                         const res = await client.query("SELECT id FROM payment WHERE data->>'mp_payment_id' = $1 LIMIT 1", [String(externalId)]);
-                         if (res.rows.length > 0) {
-                             targetPaymentId = res.rows[0].id;
-                             console.log(`✅ [MP-SQL] Encontrado por MP_ID: ${targetPaymentId}`);
-                         }
-                     }
-                     
-                     if (!targetPaymentId && resourceId) {
-                         const res = await client.query("SELECT id FROM payment WHERE data->>'resource_id' = $1 LIMIT 1", [String(resourceId)]);
-                         if (res.rows.length > 0) {
-                             targetPaymentId = res.rows[0].id;
-                             console.log(`✅ [MP-SQL] Encontrado por ResourceID: ${targetPaymentId}`);
-                         }
-                     }
+    if (finalAmount > 0) {
+        try {
+            const { Client } = require('pg'); 
+            if (process.env.DATABASE_URL) {
+               const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+               await client.connect();
+               try {
+                   // BÚSQUEDA DEL PAYMENT ID (Igual que antes...)
+                   if (!targetPaymentId) {
+                       console.log("🔍 [MP-SQL] ID no encontrado en input directo. Buscando en DB...");
+                       
+                       if (externalId) {
+                           const res = await client.query("SELECT id FROM payment WHERE data->>'mp_payment_id' = $1 LIMIT 1", [String(externalId)]);
+                           if (res.rows.length > 0) {
+                               targetPaymentId = res.rows[0].id;
+                               console.log(`✅ [MP-SQL] Encontrado por MP_ID: ${targetPaymentId}`);
+                           }
+                       }
+                       
+                       if (!targetPaymentId && resourceId) {
+                           const res = await client.query("SELECT id FROM payment WHERE data->>'resource_id' = $1 LIMIT 1", [String(resourceId)]);
+                           if (res.rows.length > 0) {
+                               targetPaymentId = res.rows[0].id;
+                               console.log(`✅ [MP-SQL] Encontrado por ResourceID: ${targetPaymentId}`);
+                           }
+                       }
 
-                     if (!targetPaymentId) {
-                         const collectionId = input.payment_collection_id || input.payment_session?.payment_collection_id;
-                         if (collectionId) {
-                             const res = await client.query('SELECT id FROM payment WHERE payment_collection_id = $1 LIMIT 1', [collectionId]);
-                             if (res.rows.length > 0) targetPaymentId = res.rows[0].id;
-                         }
-                     }
-                 }
+                       if (!targetPaymentId) {
+                           const collectionId = input.payment_collection_id || input.payment_session?.payment_collection_id;
+                           if (collectionId) {
+                               const res = await client.query('SELECT id FROM payment WHERE payment_collection_id = $1 LIMIT 1', [collectionId]);
+                               if (res.rows.length > 0) targetPaymentId = res.rows[0].id;
+                           }
+                       }
+                   }
 
-                 if (targetPaymentId) {
-                     this.logger_.info(`🔧 [MP-SQL] UPDATE directo en Payment ID: ${targetPaymentId}`);
-                     
-                     // 🔥 CORRECCIÓN CRÍTICA: Actualizar amount, captured_at Y mp_payment_id en data
-                     if (externalId) {
-                         // Actualizar amount, captured_at Y mergear mp_payment_id en el JSONB data
-                         const updateQuery = `
-                             UPDATE payment 
-                             SET 
-                                 amount = $1, 
-                                 captured_at = NOW(),
-                                 data = COALESCE(data, '{}'::jsonb) || jsonb_build_object('mp_payment_id', $2)
-                             WHERE id = $3
-                         `;
-                         await client.query(updateQuery, [finalAmount, String(externalId), targetPaymentId]);
-                         this.logger_.info(`✅ [MP-SQL] Base de datos actualizada. Estado: CAPTURED. mp_payment_id guardado en data.`);
-                     } else {
-                         // Si no hay externalId, solo actualizamos amount y captured_at
-                         const updateQuery = `UPDATE payment SET amount = $1, captured_at = NOW() WHERE id = $2`;
-                         await client.query(updateQuery, [finalAmount, targetPaymentId]);
-                         this.logger_.warn(`⚠️ [MP-SQL] Actualizado sin mp_payment_id (no disponible).`);
-                     }
-                 } else { 
-                     this.logger_.warn(`⚠️ [MP-SQL] ERROR CRÍTICO: No se pudo encontrar la fila en la tabla 'payment'.`);
-                 }
-             } finally { await client.end(); }
-          } else { this.logger_.error(`❌ [MP-SQL] Falta DATABASE_URL.`); }
-      } catch (err: any) { this.logger_.error(`🔥 [MP-SQL-ERROR] DB Error: ${err.message}`); }
-  }
-  
-  return { 
-      ...sessionData, 
-      status: 'captured', 
-      amount_captured: finalAmount, 
-      mp_capture_timestamp: new Date().toISOString(),
-      mp_payment_id: externalId // Asegurar que también lo retornamos en el sessionData
-  }; 
+                   if (targetPaymentId) {
+                       this.logger_.info(`🔧 [MP-SQL] UPDATE directo en Payment ID: ${targetPaymentId}`);
+                       
+                       if (externalId) {
+                           // 🔥 CORRECCIÓN AQUÍ: Agregamos "::text" al $2 para que Postgres no llore
+                           const updateQuery = `
+                               UPDATE payment 
+                               SET 
+                                   amount = $1, 
+                                   captured_at = NOW(),
+                                   data = COALESCE(data, '{}'::jsonb) || jsonb_build_object('mp_payment_id', $2::text)
+                               WHERE id = $3
+                           `;
+                           await client.query(updateQuery, [finalAmount, String(externalId), targetPaymentId]);
+                           this.logger_.info(`✅ [MP-SQL] Base de datos actualizada. Estado: CAPTURED. mp_payment_id guardado.`);
+                       } else {
+                           const updateQuery = `UPDATE payment SET amount = $1, captured_at = NOW() WHERE id = $2`;
+                           await client.query(updateQuery, [finalAmount, targetPaymentId]);
+                           this.logger_.warn(`⚠️ [MP-SQL] Actualizado sin mp_payment_id (no disponible).`);
+                       }
+                   } else { 
+                       this.logger_.warn(`⚠️ [MP-SQL] ERROR CRÍTICO: No se pudo encontrar la fila en la tabla 'payment'.`);
+                   }
+               } finally { await client.end(); }
+            } else { this.logger_.error(`❌ [MP-SQL] Falta DATABASE_URL.`); }
+        } catch (err: any) { this.logger_.error(`🔥 [MP-SQL-ERROR] DB Error: ${err.message}`); }
+    }
+    
+    return { 
+        ...sessionData, 
+        status: 'captured', 
+        amount_captured: finalAmount, 
+        mp_capture_timestamp: new Date().toISOString(),
+        mp_payment_id: externalId
+    }; 
 }
 
   // 4. CANCELAR
