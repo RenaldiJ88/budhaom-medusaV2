@@ -149,42 +149,61 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
   }
 
   // -------------------------------------------------------------------
-  // 3. CAPTURAR
+  // 3. CAPTURAR (MEJORADO: Búsqueda profunda de ID)
   // -------------------------------------------------------------------
   async capturePayment(input: any): Promise<SessionData> { 
-      const sessionData = input.session_data || input.data || {};
-      this.logger_.info(`🔍 [MP-CAPTURE] Iniciando captura...`);
-      let amountToCapture = input.amount;
-      if (!amountToCapture && sessionData.transaction_amount) amountToCapture = sessionData.transaction_amount;
-      const finalAmount = parseFloat(Number(amountToCapture).toFixed(2));
+    const sessionData = input.session_data || input.data || {};
+    this.logger_.info(`🔍 [MP-CAPTURE] Iniciando captura...`);
+    
+    // LOG DE DEBUG PARA VER QUÉ LLEGA EXACTAMENTE
+    console.log("🔍 [MP-DEBUG-CAPTURE] Input keys:", Object.keys(input));
+    if (input.id) console.log("🔍 [MP-DEBUG-CAPTURE] input.id:", input.id);
+    if (input.payment_id) console.log("🔍 [MP-DEBUG-CAPTURE] input.payment_id:", input.payment_id);
 
-      if (!input.amount && finalAmount > 0) {
-          try {
-              const { Client } = require('pg'); 
-              if (process.env.DATABASE_URL) {
-                 const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-                 await client.connect();
-                 try {
-                     let targetPaymentId = input.payment_id || input.id;
-                     if (!targetPaymentId) {
-                         const collectionId = input.payment_collection_id || input.payment_session?.payment_collection_id;
-                         if (collectionId) {
-                             const res = await client.query('SELECT id FROM payment WHERE payment_collection_id = $1 LIMIT 1', [collectionId]);
-                             if (res.rows.length > 0) targetPaymentId = res.rows[0].id;
-                         }
-                     }
-                     if (targetPaymentId) {
-                         this.logger_.info(`🔧 [MP-SQL] UPDATE directo en ID: ${targetPaymentId}`);
-                         const updateQuery = `UPDATE payment SET amount = $1, captured_amount = $1, captured_at = NOW() WHERE id = $2`;
-                         await client.query(updateQuery, [finalAmount, targetPaymentId]);
-                         this.logger_.info(`✅ [MP-SQL] Base de datos actualizada.`);
-                     } else { this.logger_.warn(`⚠️ [MP-SQL] No se encontró Payment ID.`); }
-                 } finally { await client.end(); }
-              } else { this.logger_.error(`❌ [MP-SQL] Falta DATABASE_URL.`); }
-          } catch (err: any) { this.logger_.error(`🔥 [MP-SQL-ERROR] DB Error: ${err.message}`); }
-      }
-      return { ...sessionData, status: 'captured', amount_captured: finalAmount, mp_capture_timestamp: new Date().toISOString() }; 
-  }
+    let amountToCapture = input.amount;
+    if (!amountToCapture && sessionData.transaction_amount) amountToCapture = sessionData.transaction_amount;
+    
+    // Sanitización del monto
+    const finalAmount = parseFloat(Number(amountToCapture).toFixed(2));
+
+    // ESTRATEGIA DE BÚSQUEDA DE ID (Más agresiva)
+    let targetPaymentId = input.id || input.payment_id; 
+
+    if (finalAmount > 0) {
+        try {
+            const { Client } = require('pg'); 
+            if (process.env.DATABASE_URL) {
+               const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+               await client.connect();
+               try {
+                   // Si no tenemos ID directo, buscamos por la colección (el carrito/sesión)
+                   if (!targetPaymentId) {
+                       const collectionId = input.payment_collection_id || input.payment_session?.payment_collection_id;
+                       if (collectionId) {
+                           console.log(`🔍 [MP-SQL] Buscando ID por Collection: ${collectionId}`);
+                           const res = await client.query('SELECT id FROM payment WHERE payment_collection_id = $1 LIMIT 1', [collectionId]);
+                           if (res.rows.length > 0) targetPaymentId = res.rows[0].id;
+                       }
+                   }
+
+                   if (targetPaymentId) {
+                       this.logger_.info(`🔧 [MP-SQL] UPDATE directo en ID: ${targetPaymentId}`);
+                       // Actualizamos el payment para marcarlo como capturado manualmente en la DB
+                       const updateQuery = `UPDATE payment SET amount = $1, captured_amount = $1, captured_at = NOW() WHERE id = $2`;
+                       await client.query(updateQuery, [finalAmount, targetPaymentId]);
+                       this.logger_.info(`✅ [MP-SQL] Base de datos actualizada correctamente.`);
+                   } else { 
+                       this.logger_.warn(`⚠️ [MP-SQL] IMPOSIBLE ENCONTRAR PAYMENT ID. La captura en MP se hará, pero la DB local podría desincronizarse.`);
+                       // Imprimimos todo el input para ver qué falta
+                       console.log("⚠️ [MP-DEBUG-FAIL] Input completo:", JSON.stringify(input, null, 2));
+                   }
+               } finally { await client.end(); }
+            } else { this.logger_.error(`❌ [MP-SQL] Falta DATABASE_URL.`); }
+        } catch (err: any) { this.logger_.error(`🔥 [MP-SQL-ERROR] DB Error: ${err.message}`); }
+    }
+    
+    return { ...sessionData, status: 'captured', amount_captured: finalAmount, mp_capture_timestamp: new Date().toISOString() }; 
+}
 
   // 4. CANCELAR
   async cancelPayment(input: any): Promise<SessionData> { 
@@ -200,25 +219,53 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
       return sessionData; 
   }
 
-  // 5. REEMBOLSAR
+  // -------------------------------------------------------------------
+  // 5. REEMBOLSAR (MEJORADO: Búsqueda del ID de MP)
+  // -------------------------------------------------------------------
   async refundPayment(input: any): Promise<SessionData> { 
     this.logger_.info(`🔍 [MP-REFUND] Iniciando reembolso...`);
+    
+    // BÚSQUEDA DEL ID DE MERCADOPAGO (Es el dato crítico)
     const sessionData = input.session_data || input.data || {};
-    const paymentId = sessionData.mp_payment_id || input.data?.mp_payment_id;
+    const paymentId = sessionData.mp_payment_id || input.data?.mp_payment_id || input.mp_payment_id;
+    
+    console.log(`🔍 [MP-DEBUG-REFUND] Buscando mp_payment_id... Encontrado: ${paymentId}`);
+
+    if (!paymentId) {
+        console.error("❌ [MP-REFUND-ERROR] No se encontró el 'mp_payment_id'. Datos disponibles:", JSON.stringify(sessionData));
+        throw new Error("No se puede reembolsar: Falta el ID de MercadoPago (mp_payment_id).");
+    }
+    
+    // Cálculo del monto
     let refundAmount = input.amount;
     if (refundAmount === undefined && input.context?.amount) refundAmount = input.context.amount;
-    if (!paymentId) throw new Error("Falta mp_payment_id");
     
+    // Si no viene monto, reembolsamos el total original
     const finalAmount = parseFloat(Number(refundAmount).toFixed(2));
     const effectiveAmount = (finalAmount > 0) ? finalAmount : Number(sessionData.transaction_amount);
 
+    console.log(`💸 [MP-REFUND] Reembolsando ${effectiveAmount} ARS sobre el pago ${paymentId}`);
+
     try {
         const refund = new PaymentRefund(this.mercadoPagoConfig);
+        // Creamos el reembolso en MP
         const response = await refund.create({ payment_id: paymentId as string, body: { amount: effectiveAmount } });
-        this.logger_.info(`✅ [MP-REFUND] Éxito ID: ${response.id}`);
-        return { ...sessionData, refund_id: response.id, refund_status: response.status, amount_refunded: (sessionData.amount_refunded as number || 0) + effectiveAmount };
-    } catch (error: any) { this.logger_.error(`🔥 [MP-REFUND-ERROR]: ${error.cause || error.message}`); throw error; }
+        
+        this.logger_.info(`✅ [MP-REFUND] Éxito! Reembolso ID: ${response.id} Status: ${response.status}`);
+        
+        return { 
+            ...sessionData, 
+            refund_id: response.id, 
+            refund_status: response.status, 
+            amount_refunded: (sessionData.amount_refunded as number || 0) + effectiveAmount 
+        };
+    } catch (error: any) { 
+        this.logger_.error(`🔥 [MP-REFUND-ERROR]: ${error.cause || error.message}`); 
+        console.error(error);
+        throw error; 
+    }
   }
+
 
   async deletePayment(input: any): Promise<SessionData> { return this.cancelPayment(input); }
   async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> { return { status: PaymentSessionStatus.AUTHORIZED }; }
