@@ -503,16 +503,15 @@ async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> {
 }
 
 // -------------------------------------------------------------------
-  // 7. OBTENER PAGO (CORREGIDO: Consulta BD + Fix TypeScript)
+  // 7. OBTENER PAGO + AUTO-CORRECCIÓN DE ORDEN (SELF-HEALING)
   // -------------------------------------------------------------------
   async retrievePayment(input: any): Promise<SessionData> {
-    this.logger_.info(`🔍 [MP-RETRIEVE] Consultando estado real desde BD...`);
+    // this.logger_.info(`🔍 [MP-RETRIEVE] Verificando estado y sincronizando orden...`);
     
     try {
         const { Client } = require('pg');
         
         if (!process.env.DATABASE_URL) {
-            this.logger_.warn(`⚠️ [MP-RETRIEVE] DATABASE_URL no disponible. Retornando datos del input.`);
             return input.session_data || input.data || {};
         }
         
@@ -524,124 +523,103 @@ async getPaymentStatus(input: any): Promise<{ status: PaymentSessionStatus }> {
         await client.connect();
         
         try {
-            // ESTRATEGIA 1: Buscar por payment.id directo
+            // 1. BUSCAR EL PAGO (Igual que antes)
             let paymentId = input.id || input.payment_id || input.payment?.id;
             
-            // ESTRATEGIA 2: Buscar por payment_collection_id
             if (!paymentId) {
-                const collectionId = input.payment_collection_id || 
-                                     input.payment_collection?.id ||
-                                     input.payment_session?.payment_collection_id;
+                const collectionId = input.payment_collection_id || input.payment_session?.payment_collection_id;
                 if (collectionId) {
-                    const res = await client.query(
-                        'SELECT id FROM payment WHERE payment_collection_id = $1 LIMIT 1',
-                        [collectionId]
-                    );
-                    if (res.rows.length > 0) {
-                        paymentId = res.rows[0].id;
-                        this.logger_.info(`✅ [MP-RETRIEVE] Payment ID encontrado por collection_id: ${paymentId}`);
-                    }
+                    const res = await client.query('SELECT id FROM payment WHERE payment_collection_id = $1 LIMIT 1', [collectionId]);
+                    if (res.rows.length > 0) paymentId = res.rows[0].id;
                 }
             }
             
-            // ESTRATEGIA 3: Buscar por mp_payment_id en data
             if (!paymentId) {
                 const sessionData = input.session_data || input.data || {};
                 const mpPaymentId = sessionData.mp_payment_id || input.mp_payment_id;
                 if (mpPaymentId) {
-                    const res = await client.query(
-                        "SELECT id FROM payment WHERE data->>'mp_payment_id' = $1 LIMIT 1",
-                        [String(mpPaymentId)]
-                    );
-                    if (res.rows.length > 0) {
-                        paymentId = res.rows[0].id;
-                        this.logger_.info(`✅ [MP-RETRIEVE] Payment ID encontrado por mp_payment_id: ${paymentId}`);
-                    }
+                    const res = await client.query("SELECT id FROM payment WHERE data->>'mp_payment_id' = $1 LIMIT 1", [String(mpPaymentId)]);
+                    if (res.rows.length > 0) paymentId = res.rows[0].id;
                 }
             }
-            
-            // ESTRATEGIA 4: Buscar por resource_id en data
+
             if (!paymentId) {
-                const sessionData = input.session_data || input.data || {};
-                const resourceId = sessionData.resource_id || input.resource_id;
-                if (resourceId) {
-                    const res = await client.query(
-                        "SELECT id FROM payment WHERE data->>'resource_id' = $1 LIMIT 1",
-                        [String(resourceId)]
-                    );
-                    if (res.rows.length > 0) {
-                        paymentId = res.rows[0].id;
-                        this.logger_.info(`✅ [MP-RETRIEVE] Payment ID encontrado por resource_id: ${paymentId}`);
-                    }
-                }
-            }
-            
-            if (!paymentId) {
-                this.logger_.warn(`⚠️ [MP-RETRIEVE] No se pudo encontrar payment ID. Retornando datos del input.`);
+                // Fallback
                 return input.session_data || input.data || {};
             }
             
-            // CONSULTA PRINCIPAL: Obtener datos frescos de la BD
+            // 2. OBTENER DATOS FRESCOS
             const queryResult = await client.query(
-                `SELECT 
-                    id,
-                    amount,
-                    captured_at,
-                    data,
-                    created_at,
-                    updated_at
-                 FROM payment 
-                 WHERE id = $1 
-                 LIMIT 1`,
+                `SELECT id, amount, captured_at, data, payment_collection_id FROM payment WHERE id = $1 LIMIT 1`,
                 [paymentId]
             );
             
-            if (queryResult.rows.length === 0) {
-                this.logger_.warn(`⚠️ [MP-RETRIEVE] Payment ${paymentId} no encontrado en BD. Retornando datos del input.`);
-                return input.session_data || input.data || {};
-            }
+            if (queryResult.rows.length === 0) return input.session_data || input.data || {};
             
             const dbRow = queryResult.rows[0];
-            
-            // 🔥 CORRECCIÓN TS: Usamos 'any' para evitar el error de propiedades inexistentes
-            let paymentData: any = {}; 
-            try {
-                paymentData = typeof dbRow.data === 'string' ? JSON.parse(dbRow.data) : (dbRow.data || {});
-            } catch (e) {
-                this.logger_.warn(`⚠️ [MP-RETRIEVE] Error parseando data JSONB: ${e}`);
-                paymentData = {};
-            }
-            
-            // Determinar el estado basado en captured_at
             const isCaptured = !!dbRow.captured_at;
             
-            // Construir el objeto de retorno con datos frescos de BD
-            const freshData: SessionData = {
-                ...paymentData, // Mantener todos los datos existentes en data
+            // ============================================================
+            // 🏥 FASE DE AUTO-SANACIÓN (SELF-HEALING)
+            // Si el pago está capturado, forzamos la actualización de la Orden AQUÍ Y AHORA.
+            // ============================================================
+            if (isCaptured && dbRow.payment_collection_id) {
+                // 1. Buscamos el CART_ID desde la colección
+                const colRes = await client.query('SELECT cart_id FROM payment_collection WHERE id = $1', [dbRow.payment_collection_id]);
+                
+                if (colRes.rows.length > 0 && colRes.rows[0].cart_id) {
+                    const cartId = colRes.rows[0].cart_id;
+                    
+                    // 2. Buscamos la Orden por CART_ID (Ahora seguro existe porque estamos viéndola)
+                    const orderRes = await client.query('SELECT id, payment_status, paid_total FROM "order" WHERE cart_id = $1 LIMIT 1', [cartId]);
+                    
+                    if (orderRes.rows.length > 0) {
+                        const order = orderRes.rows[0];
+                        const amount = parseFloat(dbRow.amount);
+
+                        // Si la orden está desactualizada (status != captured O total pagado es 0)
+                        if (order.payment_status !== 'captured' || parseFloat(order.paid_total) < amount) {
+                            console.log(`🏥 [MP-HEALING] Reparando Orden ${order.id}...`);
+                            
+                            // Actualización Forzosa
+                            await client.query(`
+                                UPDATE "order" 
+                                SET payment_status = 'captured',
+                                    paid_total = $1,
+                                    updated_at = NOW()
+                                WHERE id = $2
+                            `, [amount, order.id]);
+                            
+                            console.log(`✅ [MP-HEALING] Orden sincronizada. Ahora permite Refund.`);
+                        }
+                    }
+                }
+            }
+            // ============================================================
+
+            // Parsear data
+            let paymentData: any = {}; 
+            try { paymentData = typeof dbRow.data === 'string' ? JSON.parse(dbRow.data) : (dbRow.data || {}); } catch (e) {}
+            
+            return {
+                ...paymentData,
                 id: dbRow.id,
                 amount: dbRow.amount,
-                transaction_amount: dbRow.amount, // Alias para compatibilidad
-                mp_payment_id: paymentData.mp_payment_id || null, // Ahora TS no se queja
-                resource_id: paymentData.resource_id || null,     // Ahora TS no se queja
+                transaction_amount: dbRow.amount,
+                mp_payment_id: paymentData.mp_payment_id || null,
+                resource_id: paymentData.resource_id || null,
                 status: isCaptured ? 'captured' : 'authorized',
                 captured_at: dbRow.captured_at ? dbRow.captured_at.toISOString() : null,
                 mp_capture_timestamp: dbRow.captured_at ? dbRow.captured_at.toISOString() : null,
-                amount_captured: isCaptured ? dbRow.amount : null,
-                created_at: dbRow.created_at?.toISOString(),
-                updated_at: dbRow.updated_at?.toISOString()
+                amount_captured: isCaptured ? dbRow.amount : null
             };
-            
-            this.logger_.info(`✅ [MP-RETRIEVE] Datos frescos obtenidos. Estado: ${freshData.status}, mp_payment_id: ${freshData.mp_payment_id}`);
-            
-            return freshData;
             
         } finally {
             await client.end();
         }
         
     } catch (error: any) {
-        this.logger_.error(`🔥 [MP-RETRIEVE-ERROR] Error consultando BD: ${error.message}`);
-        // En caso de error, retornar datos del input como fallback
+        this.logger_.error(`🔥 [MP-RETRIEVE-ERROR]: ${error.message}`);
         return input.session_data || input.data || {};
     }
 }
