@@ -148,7 +148,7 @@ class MercadoPagoProvider extends AbstractPaymentProvider<SessionData> {
     } catch (err: any) { this.logger_.error(`🔥 [MP-AUTH-ERROR] ${err.message}`); return { status: PaymentSessionStatus.ERROR, data: paymentSessionData }; }
   }
 // -------------------------------------------------------------------
-// 3. CAPTURAR (SQL CORREGIDO: Actualiza payment Y payment_collection)
+// 3. CAPTURAR (SQL CORREGIDO: Actualiza payment + payment_collection + order)
 // -------------------------------------------------------------------
 async capturePayment(input: any): Promise<SessionData> { 
     const sessionData = input.session_data || input.data || {};
@@ -213,7 +213,6 @@ async capturePayment(input: any): Promise<SessionData> {
                            paymentCollectionId = collectionIdQuery.rows[0].payment_collection_id;
                            this.logger_.info(`🔍 [MP-SQL] Payment Collection ID encontrado: ${paymentCollectionId}`);
                        } else {
-                           // Fallback: buscar desde input
                            paymentCollectionId = input.payment_collection_id || input.payment_session?.payment_collection_id || null;
                        }
                        
@@ -239,7 +238,7 @@ async capturePayment(input: any): Promise<SessionData> {
                        if (paymentCollectionId) {
                            this.logger_.info(`🔧 [MP-SQL] Actualizando Payment Collection ID: ${paymentCollectionId}`);
                            
-                           // Calcular el monto total capturado sumando todos los payments capturados de esta colección
+                           // Calcular el monto total capturado
                            const sumQuery = await client.query(
                                `SELECT COALESCE(SUM(amount), 0) as total_captured 
                                 FROM payment 
@@ -248,14 +247,9 @@ async capturePayment(input: any): Promise<SessionData> {
                            );
                            
                            const totalCaptured = parseFloat(sumQuery.rows[0].total_captured) || 0;
-                           
                            this.logger_.info(`🔍 [MP-SQL] Monto total capturado calculado: ${totalCaptured}`);
                            
-                           // Actualizar payment_collection con el monto capturado total
-                           // Nota: Medusa v2 puede calcular esto dinámicamente, pero actualizamos por si acaso
-                           // Intentamos actualizar campos comunes que pueden existir
                            try {
-                               // ESTRATEGIA 1: Intentar actualizar campo captured_amount si existe
                                const updateCollectionQuery1 = `
                                    UPDATE payment_collection 
                                    SET captured_amount = $1,
@@ -265,11 +259,9 @@ async capturePayment(input: any): Promise<SessionData> {
                                await client.query(updateCollectionQuery1, [totalCaptured, paymentCollectionId]);
                                this.logger_.info(`✅ [MP-SQL] Payment Collection actualizado con captured_amount: ${totalCaptured}`);
                            } catch (err: any) {
-                               // Si el campo no existe, intentamos otra estrategia
                                this.logger_.warn(`⚠️ [MP-SQL] Campo captured_amount no existe o error: ${err.message}. Intentando alternativa...`);
                                
                                try {
-                                   // ESTRATEGIA 2: Actualizar solo updated_at para forzar recálculo
                                    const updateCollectionQuery2 = `
                                        UPDATE payment_collection 
                                        SET updated_at = NOW()
@@ -282,7 +274,6 @@ async capturePayment(input: any): Promise<SessionData> {
                                }
                            }
                            
-                           // ESTRATEGIA 3: Actualizar data JSONB en payment_collection si existe
                            try {
                                const updateCollectionDataQuery = `
                                    UPDATE payment_collection 
@@ -293,9 +284,114 @@ async capturePayment(input: any): Promise<SessionData> {
                                await client.query(updateCollectionDataQuery, [totalCaptured, paymentCollectionId]);
                                this.logger_.info(`✅ [MP-SQL] Payment Collection data actualizado con total_captured.`);
                            } catch (err3: any) {
-                               // No crítico si falla, solo loggear
                                this.logger_.warn(`⚠️ [MP-SQL] No se pudo actualizar data en payment_collection: ${err3.message}`);
                            }
+                           
+                           // PASO 3: Buscar y actualizar la tabla order
+                           this.logger_.info(`🔧 [MP-SQL] Buscando Order asociada a Payment Collection: ${paymentCollectionId}`);
+                           
+                           try {
+                               // ESTRATEGIA 1: Buscar order por payment_collection_id (relación directa)
+                               let orderId: string | null = null;
+                               
+                               // En Medusa v2, order puede tener payment_collection_id o relacionarse vía cart_id
+                               const orderQuery1 = await client.query(
+                                   `SELECT id FROM "order" WHERE payment_collection_id = $1 LIMIT 1`,
+                                   [paymentCollectionId]
+                               );
+                               
+                               if (orderQuery1.rows.length > 0) {
+                                   orderId = orderQuery1.rows[0].id;
+                                   this.logger_.info(`✅ [MP-SQL] Order encontrada por payment_collection_id: ${orderId}`);
+                               } else {
+                                   // ESTRATEGIA 2: Buscar order vía cart_id (payment_collection -> cart -> order)
+                                   const cartOrderQuery = await client.query(
+                                       `SELECT o.id 
+                                        FROM "order" o
+                                        INNER JOIN payment_collection pc ON pc.cart_id = o.cart_id
+                                        WHERE pc.id = $1
+                                        LIMIT 1`,
+                                       [paymentCollectionId]
+                                   );
+                                   
+                                   if (cartOrderQuery.rows.length > 0) {
+                                       orderId = cartOrderQuery.rows[0].id;
+                                       this.logger_.info(`✅ [MP-SQL] Order encontrada vía cart_id: ${orderId}`);
+                                   }
+                               }
+                               
+                               if (orderId) {
+                                   this.logger_.info(`🔧 [MP-SQL] Actualizando Order ID: ${orderId}`);
+                                   
+                                   // ESTRATEGIA A: Intentar actualizar payment_status si existe
+                                   try {
+                                       const updateOrderStatusQuery = `
+                                           UPDATE "order" 
+                                           SET payment_status = 'captured',
+                                               updated_at = NOW()
+                                           WHERE id = $1
+                                       `;
+                                       await client.query(updateOrderStatusQuery, [orderId]);
+                                       this.logger_.info(`✅ [MP-SQL] Order payment_status actualizado a 'captured'.`);
+                                   } catch (errStatus: any) {
+                                       this.logger_.warn(`⚠️ [MP-SQL] Campo payment_status no existe o error: ${errStatus.message}`);
+                                   }
+                                   
+                                   // ESTRATEGIA B: Actualizar paid_total si existe
+                                   try {
+                                       const updateOrderPaidQuery = `
+                                           UPDATE "order" 
+                                           SET paid_total = $1,
+                                               updated_at = NOW()
+                                           WHERE id = $2
+                                       `;
+                                       await client.query(updateOrderPaidQuery, [totalCaptured, orderId]);
+                                       this.logger_.info(`✅ [MP-SQL] Order paid_total actualizado a: ${totalCaptured}`);
+                                   } catch (errPaid: any) {
+                                       this.logger_.warn(`⚠️ [MP-SQL] Campo paid_total no existe o error: ${errPaid.message}`);
+                                   }
+                                   
+                                   // ESTRATEGIA C: Actualizar data JSONB con información de captura
+                                   try {
+                                       const updateOrderDataQuery = `
+                                           UPDATE "order" 
+                                           SET data = COALESCE(data, '{}'::jsonb) || jsonb_build_object(
+                                               'payment_status', 'captured'::text,
+                                               'paid_total', $1::numeric,
+                                               'captured_at', NOW()::text
+                                           ),
+                                           updated_at = NOW()
+                                           WHERE id = $2
+                                       `;
+                                       await client.query(updateOrderDataQuery, [totalCaptured, orderId]);
+                                       this.logger_.info(`✅ [MP-SQL] Order data actualizado con payment_status y paid_total.`);
+                                   } catch (errData: any) {
+                                       this.logger_.warn(`⚠️ [MP-SQL] Error actualizando data en order: ${errData.message}`);
+                                   }
+                                   
+                                   // ESTRATEGIA D: Actualizar updated_at mínimo para forzar recálculo
+                                   try {
+                                       const updateOrderTimestampQuery = `
+                                           UPDATE "order" 
+                                           SET updated_at = NOW()
+                                           WHERE id = $1
+                                       `;
+                                       await client.query(updateOrderTimestampQuery, [orderId]);
+                                       this.logger_.info(`✅ [MP-SQL] Order updated_at actualizado. Medusa recalculará estado.`);
+                                   } catch (errTimestamp: any) {
+                                       this.logger_.warn(`⚠️ [MP-SQL] Error actualizando updated_at en order: ${errTimestamp.message}`);
+                                   }
+                                   
+                               } else {
+                                   this.logger_.warn(`⚠️ [MP-SQL] No se encontró Order asociada a payment_collection_id: ${paymentCollectionId}`);
+                                   this.logger_.warn(`⚠️ [MP-SQL] Esto puede ser normal si la captura ocurre antes de crear la orden.`);
+                               }
+                               
+                           } catch (orderError: any) {
+                               this.logger_.error(`🔥 [MP-SQL-ORDER-ERROR] Error buscando/actualizando order: ${orderError.message}`);
+                               // No lanzamos error, solo loggeamos
+                           }
+                           
                        } else {
                            this.logger_.warn(`⚠️ [MP-SQL] No se encontró payment_collection_id. Solo se actualizó payment.`);
                        }
