@@ -1,34 +1,41 @@
-import { Github } from "@medusajs/icons"
-import { Button, Heading } from "@medusajs/ui"
+import React from "react"
 
 const Hero = () => {
   return (
-    <div className="h-[75vh] w-full border-b border-ui-border-base relative bg-ui-bg-subtle">
-      <div className="absolute inset-0 z-10 flex flex-col justify-center items-center text-center small:p-32 gap-6">
-        <span>
-          <Heading
-            level="h1"
-            className="text-3xl leading-10 text-ui-fg-base font-normal"
-          >
-            Well done! You have successfully deployed your Medusa 2.0 store on Railway!
-          </Heading>
-          <Heading
-            level="h2"
-            className="text-3xl leading-10 text-ui-fg-subtle font-normal"
-          >
-            Need help customizing your store?
-          </Heading>
-        </span>
-        <a
-          href="https://funkyton.com/medusajs-2-0-is-finally-here/"
-          target="_blank"
+    <section className="snap-section relative h-screen w-full overflow-hidden bg-[#101010] flex flex-col">
+      {/* --- VIDEO DE FONDO --- */}
+      <div className="absolute inset-0 z-0 w-full h-full overflow-hidden">
+        <video
+          className="object-cover w-full h-full"
+          autoPlay
+          loop
+          muted
+          playsInline
         >
-          <h1 style={{ textDecoration: "underline" }}>
-            Visit the tutorial
-          </h1>
+          {/* Next.js busca esto automáticamente en la carpeta 'public' */}
+          <source src="/video/video-home-f2.mp4" type="video/mp4" />
+          Tu navegador no admite el video de fondo.
+        </video>
+      </div>
+
+      {/* --- CONTENIDO --- */}
+      <div className="relative z-20 flex flex-1 flex-col items-center justify-center px-4 text-center pointer-events-none">
+        <h1 className="text-4xl font-bold text-white sm:text-5xl md:text-7xl lg:text-8xl font-poppins drop-shadow-[0_0_12px_rgba(255,255,255,0.35)]">
+          Vestí tu esencia.
+        </h1>
+        
+        <p className="mt-6 text-sm tracking-[0.3em] text-white md:text-base font-inter drop-shadow-[0_0_6px_rgba(255,255,255,0.3)]">
+          ENIGMA | BUDHA.Om | NATURE & SPIRIT
+        </p>
+        
+        <a
+          href="#colecciones"
+          className="bg-transparent mt-10 px-8 py-4 text-sm font-medium text-white md:text-base font-inter border border-white/30 rounded-md hover:border-white/60 transition-colors drop-shadow-[0_0_6px_rgba(255,255,255,0.25)] pointer-events-auto"
+        >
+          DESCUBRIR LAS COLECCIONES
         </a>
       </div>
-    </div>
+    </section>
   )
 }
 
