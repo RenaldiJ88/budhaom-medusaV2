@@ -33,9 +33,10 @@ export default async function Home({
   return (
     <>
       <Hero />
-      <FeaturedCollections />
-      <TransformationBlock />
-      <BenefitsSection />
+      {/* PRUEBA: COMENTA ESTOS 3 UN MOMENTO */}
+      {/* <FeaturedCollections /> */}
+      {/* <TransformationBlock /> */}
+      {/* <BenefitsSection /> */}
       <div className="py-12 bg-white">
         <ul className="flex flex-col gap-x-6">
           <FeaturedProducts collections={collections} region={region} />
