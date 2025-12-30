@@ -9,6 +9,7 @@ import FeaturedCollections from "@modules/home/components/featured-collections"
 import TransformationBlock from "@modules/home/components/transformation-block"
 import BenefitsSection from "@modules/home/components/benefits-section"
 import FeaturedProducts from "@modules/home/components/featured-products"
+import NatureSpiritSection from "@modules/home/components/nature-spirit-section"
 
 import { getCollectionsWithProducts } from "@lib/data/collections"
 import { getRegion } from "@lib/data/regions"
@@ -39,6 +40,8 @@ export default async function Home({
 
       {/* 2. AQUÍ VA EL VIDEO DE ACCIÓN */}
       <TransformationVideo />
+
+      <NatureSpiritSection />
 
       {/* Productos (El resto sigue igual) */}
       <div className="py-12 bg-white">
