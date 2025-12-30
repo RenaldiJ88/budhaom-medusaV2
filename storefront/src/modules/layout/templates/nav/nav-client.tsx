@@ -29,8 +29,6 @@ export default function NavClient() {
     return (
         <>
             {/* --- NAVBAR PRINCIPAL --- */}
-      // Dentro de nav-client.tsx
-
             <nav
                 className={`fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 md:px-8 lg:px-16 transition-colors duration-500 ease-in-out py-4 ${isScrolled
                         ? "bg-[#101010]/95 shadow-lg" // Solo agregamos fondo oscuro y sombra
