@@ -1,44 +1,51 @@
-"use client" // Importante agregarlo para ver los logs en consola del navegador
+"use client"
 
-import React from "react"
+import Link from "next/link" // <--- 1. Usamos Link nativo
+import { Github } from "@medusajs/icons" // O los iconos que uses
 
-const Hero = () => {
+// 2. Definimos que recibe countryCode
+type HeroProps = {
+  countryCode: string
+}
+
+const Hero = ({ countryCode }: HeroProps) => {
   return (
-    <section className="relative h-screen w-full overflow-hidden bg-gray-900 flex flex-col">
-      {/* CAPA VIDEO */}
-      <div className="absolute inset-0 z-0 w-full h-full">
+    <div className="h-[75vh] w-full border-b border-ui-border-base relative bg-ui-bg-subtle">
+      
+      {/* VIDEO DE FONDO (Si usas video, esto debe ser Client Side) */}
+      <div className="absolute inset-0 z-0">
         <video
-          className="object-cover w-full h-full"
           autoPlay
           loop
           muted
           playsInline
-          preload="auto" // SOLUCIÓN CURSOR: Forzar precarga
-          onError={(e) => console.error("Error cargando video:", e)} // LOG DE ERROR
+          className="h-full w-full object-cover opacity-50"
         >
-          <source src="/video/video-home-f2.mp4" type="video/mp4" />
+          {/* Asegúrate de que este video exista o cambia la ruta */}
+          <source src="/video/hero-video.mp4" type="video/mp4" />
         </video>
       </div>
 
-      {/* CAPA OSCURA */}
-      <div className="absolute inset-0 z-10 bg-black/30 pointer-events-none" />
-
-      {/* CAPA TEXTO */}
-      <div className="relative z-20 flex flex-1 flex-col items-center justify-center px-4 text-center pointer-events-none">
-        <h1 className="text-4xl font-bold text-white sm:text-5xl md:text-7xl lg:text-8xl font-poppins drop-shadow-[0_0_12px_rgba(255,255,255,0.35)]">
-          Vestí tu esencia.
-        </h1>
-        <p className="mt-6 text-sm tracking-[0.3em] text-white md:text-base font-inter drop-shadow-[0_0_6px_rgba(255,255,255,0.3)]">
-          ENIGMA | BUDHA.Om | NATURE & SPIRIT
-        </p>
-        <a
-          href="#colecciones"
-          className="bg-transparent mt-10 px-8 py-4 text-sm font-medium text-white md:text-base font-inter border border-white/30 rounded-md hover:border-white/60 transition-colors drop-shadow-[0_0_6px_rgba(255,255,255,0.25)] pointer-events-auto"
+      <div className="absolute inset-0 z-10 flex flex-col justify-center items-center text-center small:p-32 gap-6">
+        <span>
+          <h1 className="text-3xl leading-10 text-ui-fg-base font-normal">
+            Budha.Om
+          </h1>
+          <h2 className="text-3xl leading-10 text-ui-fg-subtle font-normal">
+            Vestí tu esencia
+          </h2>
+        </span>
+        
+        {/* 3. ENLACE CORREGIDO CON countryCode */}
+        <Link
+          href={`/${countryCode}/store`}
+          className="group flex items-center gap-x-2 px-6 py-3 rounded-full bg-black/80 text-white hover:bg-black transition-all"
         >
-          DESCUBRIR LAS COLECCIONES
-        </a>
+          <Github /> {/* O el icono que quieras */}
+          Ir a la Tienda
+        </Link>
       </div>
-    </section>
+    </div>
   )
 }
 

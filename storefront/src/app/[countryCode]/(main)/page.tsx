@@ -31,19 +31,19 @@ export default async function Home({
 
   return (
     <>
-      <Hero />
+      {/* 1. AQUÍ ESTABA EL CULPABLE: Pasamos countryCode al Hero */}
+      <Hero countryCode={countryCode} />
       
-      {/* 1. Pasamos countryCode */}
       <FeaturedCollections countryCode={countryCode} />
-
-      {/* 2. Pasamos countryCode */}
+      
       <TransformationBlock countryCode={countryCode} />
-
+      
       <BenefitsSection />
       
-      {/* Estos ya los habíamos arreglado, los dejamos así */}
       <TransformationVideo countryCode={countryCode} />
+      
       <NatureSpiritSection />
+      
       <DesignCarousel countryCode={countryCode} />
 
       <div className="py-12 bg-white">
