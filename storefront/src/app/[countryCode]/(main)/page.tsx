@@ -37,9 +37,9 @@ export default async function Home({
       <FeaturedCollections />
       <TransformationBlock />
       <BenefitsSection />
-      <TransformationVideo />
+      <TransformationVideo countryCode={countryCode} />
       <NatureSpiritSection />
-      <DesignCarousel />
+      <DesignCarousel countryCode={countryCode} />
       {/* Productos (El resto sigue igual) */}
       <div className="py-12 bg-white">
         <ul className="flex flex-col gap-x-6">
