@@ -1,50 +1,52 @@
 "use client"
 
-import Link from "next/link" // <--- 1. Usamos Link nativo
-import { Github } from "@medusajs/icons" // O los iconos que uses
+import Link from "next/link" // <--- Usamos Link nativo (El arreglo técnico)
 
-// 2. Definimos que recibe countryCode
+// 1. Recibimos countryCode (El arreglo técnico)
 type HeroProps = {
   countryCode: string
 }
 
 const Hero = ({ countryCode }: HeroProps) => {
   return (
-    <div className="h-[75vh] w-full border-b border-ui-border-base relative bg-ui-bg-subtle">
+    // 2. RESTAURAMOS TU DISEÑO: h-screen, fondo negro, overflow hidden
+    <div className="relative h-screen w-full bg-black overflow-hidden">
       
-      {/* VIDEO DE FONDO (Si usas video, esto debe ser Client Side) */}
+      {/* --- VIDEO DE FONDO --- */}
       <div className="absolute inset-0 z-0">
         <video
           autoPlay
           loop
           muted
           playsInline
-          className="h-full w-full object-cover opacity-50"
+          className="h-full w-full object-cover opacity-60" // Ajusta la opacidad si lo quieres más oscuro/claro
         >
-          {/* Asegúrate de que este video exista o cambia la ruta */}
+          {/* ⚠️ ASEGÚRATE DE QUE ESTE SEA EL NOMBRE DE TU VIDEO EN PUBLIC/VIDEO */}
+          {/* Si tu video se llama diferente (ej: hero.mp4), cámbialo aquí abajo 👇 */}
           <source src="/video/hero-video.mp4" type="video/mp4" />
         </video>
       </div>
 
-      <div className="absolute inset-0 z-10 flex flex-col justify-center items-center text-center small:p-32 gap-6">
-        <span>
-          <h1 className="text-3xl leading-10 text-ui-fg-base font-normal">
-            Budha.Om
-          </h1>
-          <h2 className="text-3xl leading-10 text-ui-fg-subtle font-normal">
-            Vestí tu esencia
-          </h2>
-        </span>
+      {/* --- CONTENIDO --- */}
+      <div className="absolute inset-0 z-10 flex flex-col justify-center items-center text-center px-4">
         
-        {/* 3. ENLACE CORREGIDO CON countryCode */}
+        <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-white mb-4 tracking-tight font-poppins drop-shadow-lg">
+          Budha.Om
+        </h1>
+        
+        <h2 className="text-xl md:text-2xl lg:text-3xl text-gray-200 mb-8 font-inter font-light tracking-wide drop-shadow-md">
+        ENIGMA | BUDHA.Om | NATURE & SPIRIT
+        </h2>
+        
+        {/* BOTÓN ARREGLADO (Usa Link nativo + countryCode) */}
         <Link
           href={`/${countryCode}/store`}
-          className="group flex items-center gap-x-2 px-6 py-3 rounded-full bg-black/80 text-white hover:bg-black transition-all"
+          className="px-8 py-4 rounded-full bg-white text-black font-bold uppercase tracking-widest hover:bg-cyan-400 hover:scale-105 transition-all duration-300 shadow-[0_0_20px_rgba(255,255,255,0.3)]"
         >
-          <Github /> {/* O el icono que quieras */}
           Ir a la Tienda
         </Link>
       </div>
+
     </div>
   )
 }
