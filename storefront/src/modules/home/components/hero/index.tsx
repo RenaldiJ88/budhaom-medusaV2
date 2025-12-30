@@ -23,7 +23,7 @@ const Hero = ({ countryCode }: HeroProps) => {
         >
           {/* ⚠️ ASEGÚRATE DE QUE ESTE SEA EL NOMBRE DE TU VIDEO EN PUBLIC/VIDEO */}
           {/* Si tu video se llama diferente (ej: hero.mp4), cámbialo aquí abajo 👇 */}
-          <source src="/video/hero-video.mp4" type="video/mp4" />
+          <source src="/video/video-home-f2.mp4" type="video/mp4" />
         </video>
       </div>
 
@@ -31,7 +31,7 @@ const Hero = ({ countryCode }: HeroProps) => {
       <div className="absolute inset-0 z-10 flex flex-col justify-center items-center text-center px-4">
         
         <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-white mb-4 tracking-tight font-poppins drop-shadow-lg">
-          Budha.Om
+        Vestí tu esencia.
         </h1>
         
         <h2 className="text-xl md:text-2xl lg:text-3xl text-gray-200 mb-8 font-inter font-light tracking-wide drop-shadow-md">
