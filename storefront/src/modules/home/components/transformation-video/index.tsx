@@ -1,7 +1,6 @@
 "use client"
 
 import LocalizedClientLink from "@modules/common/components/localized-client-link"
-// 1. Ahora sí podemos importar esto sin errores
 import { PlaySolid } from "@medusajs/icons" 
 
 const TransformationVideo = () => {
@@ -16,13 +15,14 @@ const TransformationVideo = () => {
         
         {/* BOTÓN DE PLAY */}
         <button 
-          className="absolute inset-0 flex items-center justify-center w-full h-full" 
+          className="absolute inset-0 z-10 flex items-center justify-center w-full h-full outline-none focus:outline-none" 
           aria-label="Play video"
           onClick={() => alert("Aquí se reproduciría el video.")}
         >
-          <div className="flex items-center justify-center w-24 h-24 rounded-full bg-black/40 backdrop-blur-sm transition-transform duration-300 group-hover:scale-110 border border-white/20">
-            {/* 2. Usamos el icono oficial de Medusa */}
-            <PlaySolid className="text-white w-10 h-10 ml-1" />
+          {/* Círculo de fondo */}
+          <div className="flex items-center justify-center w-24 h-24 rounded-full bg-black/40 backdrop-blur-sm transition-transform duration-300 group-hover:scale-110 border border-white/20 shadow-lg">
+            {/* ICONO: Aumenté tamaño y aseguré el centrado */}
+            <PlaySolid className="text-white w-12 h-12" />
           </div>
         </button>
       </div>
