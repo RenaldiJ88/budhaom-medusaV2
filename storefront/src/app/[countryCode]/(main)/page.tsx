@@ -35,7 +35,7 @@ export default async function Home({
       <Hero />
       <FeaturedCollections />
       <TransformationBlock />
-      {/* <BenefitsSection /> */}
+      <BenefitsSection />
       <div className="py-12 bg-white">
         <ul className="flex flex-col gap-x-6">
           <FeaturedProducts collections={collections} region={region} />
