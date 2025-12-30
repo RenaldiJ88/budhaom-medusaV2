@@ -1,33 +1,36 @@
 "use client"
 
 import { useState } from "react"
-import LocalizedClientLink from "@modules/common/components/localized-client-link"
+import Link from "next/link" // Usamos Link nativo para evitar errores de servidor
 
-// 1. Aquí definimos tus diapositivas. ¡Más fácil de editar!
+// 1. AQUÍ ESTÁ LA CLAVE: Definimos que este componente acepta 'countryCode'
+type DesignCarouselProps = {
+  countryCode: string
+}
+
 const slides = [
   {
     id: 1,
     title: "Remera Wairua 432",
-    description: "Este diseño es nuestro manifiesto: la conexión entre la tierra y el espíritu, manifestada en una prenda que vibra con la frecuencia del universo.",
-    image: "/img/wairua.jpg", // Asegúrate que la imagen exista
+    description: "Este diseño es nuestro manifiesto: la conexión entre la tierra y el espíritu.",
+    image: "/img/wairua.jpg",
     price: "18.500",
-    handle: "/products/wairua-432" // A dónde lleva el botón comprar
+    handle: "wairua-432" 
   },
   {
     id: 2,
     title: "Remera Esencia",
-    description: "La pureza del diseño. Líneas limpias y confort absoluto para un estilo que trasciende el tiempo.",
+    description: "La pureza del diseño. Líneas limpias y confort absoluto.",
     image: "/img/reme-tatei.jpg",
     price: "17.500",
-    handle: "/products/remera-esencia"
+    handle: "remera-esencia"
   }
 ]
 
-const DesignCarousel = () => {
-  // Estado para saber cuál slide mostrar (0 es el primero)
+// 2. Y AQUÍ LO RECIBIMOS: ({ countryCode }: DesignCarouselProps)
+const DesignCarousel = ({ countryCode }: DesignCarouselProps) => {
   const [current, setCurrent] = useState(0)
 
-  // Funciones para avanzar y retroceder
   const nextSlide = () => {
     setCurrent(current === slides.length - 1 ? 0 : current + 1)
   }
@@ -37,102 +40,65 @@ const DesignCarousel = () => {
   }
 
   return (
-    <section className="flex min-h-screen flex-col items-center justify-center bg-[#101010] px-4 py-20">
-      
-      {/* TÍTULO */}
-      <h2 className="mb-4 text-center font-poppins text-3xl font-bold text-white md:text-5xl lg:mb-16 lg:text-6xl pt-6">
+    <section className="flex min-h-screen flex-col items-center justify-center bg-[#101010] px-4 py-20 relative">
+      <h2 className="mb-8 text-center font-poppins text-3xl font-bold text-white md:text-5xl lg:mb-16 lg:text-6xl">
         Encontrá el diseño que resuena con vos
       </h2>
 
-      {/* CONTENEDOR DEL CARRUSEL */}
-      <div className="relative mb-4 w-full max-w-6xl lg:mb-16">
+      <div className="relative w-full max-w-6xl">
+        {/* Flecha Izquierda */}
+        <button onClick={prevSlide} className="absolute left-0 top-1/2 z-20 -translate-y-1/2 p-4 text-white hover:text-cyan-400 md:-left-12 outline-none">
+           <svg className="h-10 w-10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+        </button>
         
-        {/* BOTÓN ANTERIOR (Flecha Izquierda) */}
-        <button 
-          onClick={prevSlide}
-          className="absolute left-0 top-1/2 z-10 -translate-x-2 md:-translate-x-12 -translate-y-1/2 text-white transition-opacity hover:opacity-70 p-2"
-          aria-label="Anterior"
-        >
-          <svg className="h-8 w-8 md:h-12 md:w-12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-          </svg>
+        {/* Flecha Derecha */}
+        <button onClick={nextSlide} className="absolute right-0 top-1/2 z-20 -translate-y-1/2 p-4 text-white hover:text-cyan-400 md:-right-12 outline-none">
+           <svg className="h-10 w-10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
         </button>
 
-        {/* BOTÓN SIGUIENTE (Flecha Derecha) */}
-        <button 
-          onClick={nextSlide}
-          className="absolute right-0 top-1/2 z-10 translate-x-2 md:translate-x-12 -translate-y-1/2 text-white transition-opacity hover:opacity-70 p-2"
-          aria-label="Siguiente"
-        >
-          <svg className="h-8 w-8 md:h-12 md:w-12" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-          </svg>
-        </button>
-
-        {/* SLIDES (Mapeamos la lista) */}
-        <div className="flex items-center justify-center overflow-hidden relative min-h-[500px]">
+        <div className="relative min-h-[500px] w-full overflow-hidden flex justify-center">
           {slides.map((slide, index) => (
-            <div
-              key={slide.id}
-              // AQUÍ ESTÁ LA MAGIA: Si el índice coincide con 'current', se muestra. Si no, se oculta.
-              className={`transition-opacity duration-500 ease-in-out absolute w-full flex-col items-center justify-center ${
-                index === current ? "opacity-100 z-10 relative flex" : "opacity-0 z-0 absolute pointer-events-none"
-              }`}
-            >
-              <div className="flex flex-col-reverse items-center gap-6 md:gap-10 lg:gap-16 md:flex-row md:gap-16">
+            <div key={slide.id} className={`absolute top-0 w-full transition-all duration-700 ease-in-out transform ${index === current ? "opacity-100 translate-x-0 relative" : "opacity-0 translate-x-8 pointer-events-none absolute"}`}>
+              <div className="flex flex-col-reverse items-center justify-center gap-10 md:flex-row md:gap-16">
                 
-                {/* IMAGEN CON GRADIENTE */}
-                <div className="relative aspect-video md:aspect-square w-64 max-w-[60vw] overflow-hidden rounded-3xl bg-gradient-to-br from-cyan-400/20 to-teal-600/20 shadow-xl sm:w-80 md:w-96">
-                  <img src={slide.image} alt={slide.title} className="object-cover w-full h-full" />
+                {/* IMAGEN */}
+                <div className="relative aspect-square w-64 md:w-96 overflow-hidden rounded-3xl bg-gradient-to-br from-cyan-400/20 to-teal-600/20 shadow-2xl">
+                  <img src={slide.image} alt={slide.title} className="h-full w-full object-cover" />
                 </div>
-
-                {/* TEXTO */}
-                <div className="flex max-w-xl flex-col items-center md:items-start text-center md:text-left">
-                  <h3 className="mb-4 font-poppins text-2xl font-bold text-white md:text-3xl lg:text-4xl">
-                    {slide.title}
-                  </h3>
-                  <p className="mb-8 text-base text-gray-300 md:text-lg lg:text-xl">
-                    {slide.description}
-                  </p>
+                
+                {/* INFO */}
+                <div className="flex max-w-lg flex-col items-center text-center md:items-start md:text-left">
+                  <h3 className="mb-4 font-poppins text-3xl font-bold text-white md:text-4xl">{slide.title}</h3>
+                  <p className="mb-8 font-inter text-lg text-gray-300">{slide.description}</p>
                   
-                  {/* BOTÓN COMPRAR */}
-                  <LocalizedClientLink
-                    href={slide.handle} // Usa el link dinámico
-                    className="inline-flex items-center justify-center rounded-full border border-teal-400 px-6 py-3 font-inter text-base font-semibold text-white shadow-lg transition-colors hover:bg-teal-400/10 md:px-8 md:py-4 md:text-lg uppercase"
+                  {/* 3. USAMOS countryCode PARA ARMAR EL LINK CORRECTAMENTE */}
+                  <Link
+                    href={`/${countryCode}/products/${slide.handle}`}
+                    className="inline-flex items-center justify-center rounded-full border border-teal-400 px-8 py-3 font-inter text-lg font-semibold text-white shadow-[0_0_15px_rgba(45,212,191,0.3)] transition-all hover:bg-teal-400/20 hover:shadow-[0_0_25px_rgba(45,212,191,0.5)] uppercase"
                   >
                     COMPRAR - ${slide.price}
-                  </LocalizedClientLink>
+                  </Link>
                 </div>
-
               </div>
             </div>
           ))}
         </div>
-
-        {/* INDICADORES (Puntitos abajo) */}
+        
+        {/* Indicadores */}
         <div className="mt-8 flex justify-center gap-3">
-          {slides.map((_, index) => (
-            <button
-              key={index}
-              onClick={() => setCurrent(index)}
-              className={`h-3 w-3 rounded-full transition-all ${
-                index === current ? "bg-teal-400 w-6" : "bg-teal-300/30 hover:bg-teal-300/50"
-              }`}
-              aria-label={`Ir a slide ${index + 1}`}
-            />
-          ))}
+            {slides.map((_, index) => (
+                <button key={index} onClick={() => setCurrent(index)} className={`h-3 w-3 rounded-full transition-all ${index === current ? "bg-cyan-400 w-8" : "bg-gray-600 hover:bg-gray-400"}`} />
+            ))}
         </div>
-
       </div>
 
-      {/* BOTÓN FINAL */}
-      <LocalizedClientLink
-        href="/store"
-        className="bg-[#00FFFF] text-[#101010] hover:bg-[#00FFFF]/90 font-inter text-base font-normal px-8 py-3 rounded-full inline-flex items-center justify-center mt-8 transition-transform hover:scale-105"
+      {/* 4. TAMBIÉN AQUÍ USAMOS countryCode */}
+      <Link
+        href={`/${countryCode}/store`}
+        className="mt-16 bg-[#00FFFF] text-[#101010] hover:bg-[#00FFFF]/90 font-inter text-base font-medium px-8 py-3 rounded-full inline-flex items-center justify-center transition-transform hover:scale-105"
       >
         VER TODOS LOS DISEÑOS
-      </LocalizedClientLink>
-
+      </Link>
     </section>
   )
 }
