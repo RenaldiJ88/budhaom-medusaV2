@@ -1,7 +1,5 @@
 import { Metadata } from "next"
 
-// 1. IMPORTAMOS EL NUEVO COMPONENTE
-import TransformationVideo from "@modules/home/components/transformation-video"
 
 // Importaciones anteriores
 import Hero from "@modules/home/components/hero"
@@ -9,7 +7,9 @@ import FeaturedCollections from "@modules/home/components/featured-collections"
 import TransformationBlock from "@modules/home/components/transformation-block"
 import BenefitsSection from "@modules/home/components/benefits-section"
 import FeaturedProducts from "@modules/home/components/featured-products"
+import TransformationVideo from "@modules/home/components/transformation-video"
 import NatureSpiritSection from "@modules/home/components/nature-spirit-section"
+import DesignCarousel from "@modules/home/components/design-carousel"
 
 import { getCollectionsWithProducts } from "@lib/data/collections"
 import { getRegion } from "@lib/data/regions"
@@ -37,12 +37,9 @@ export default async function Home({
       <FeaturedCollections />
       <TransformationBlock />
       <BenefitsSection />
-
-      {/* 2. AQUÍ VA EL VIDEO DE ACCIÓN */}
       <TransformationVideo />
-
       <NatureSpiritSection />
-
+      <DesignCarousel />
       {/* Productos (El resto sigue igual) */}
       <div className="py-12 bg-white">
         <ul className="flex flex-col gap-x-6">
