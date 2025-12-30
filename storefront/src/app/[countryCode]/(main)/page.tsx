@@ -33,9 +33,8 @@ export default async function Home({
   return (
     <>
       <Hero />
-      {/* PRUEBA: COMENTA ESTOS 3 UN MOMENTO */}
-      {/* <FeaturedCollections /> */}
-      {/* <TransformationBlock /> */}
+      <FeaturedCollections />
+      <TransformationBlock />
       {/* <BenefitsSection /> */}
       <div className="py-12 bg-white">
         <ul className="flex flex-col gap-x-6">
