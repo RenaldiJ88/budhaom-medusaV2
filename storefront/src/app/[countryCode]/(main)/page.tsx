@@ -1,9 +1,10 @@
 import { Metadata } from "next"
 
-// 1. IMPORTAMOS EL NUEVO COMPONENTE
-import TransformationBlock from "@modules/home/components/transformation-block"
+// 1. IMPORTAMOS EL NUEVO COMPONENTE DE BENEFICIOS
+import BenefitsSection from "@modules/home/components/benefits-section"
 
 // Importaciones previas
+import TransformationBlock from "@modules/home/components/transformation-block"
 import FeaturedCollections from "@modules/home/components/featured-collections"
 import FeaturedProducts from "@modules/home/components/featured-products"
 import Hero from "@modules/home/components/hero"
@@ -30,11 +31,11 @@ export default async function Home({
   return (
     <>
       <Hero />
-      
       <FeaturedCollections />
-
-      {/* 2. AQUÍ VA EL NUEVO BLOQUE DE TRANSFORMACIÓN */}
       <TransformationBlock />
+
+      {/* 2. AQUÍ VAN LAS 3 SECCIONES DE BENEFICIOS */}
+      <BenefitsSection />
 
       <div className="py-12">
         <ul className="flex flex-col gap-x-6">
