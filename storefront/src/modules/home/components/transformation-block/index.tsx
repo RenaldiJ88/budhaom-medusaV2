@@ -1,8 +1,13 @@
 "use client"
 
-import LocalizedClientLink from "@modules/common/components/localized-client-link"
+import Link from "next/link" // <--- 1. Usamos Link nativo
 
-const TransformationBlock = () => {
+// 2. Definimos el prop
+type TransformationBlockProps = {
+  countryCode: string
+}
+
+const TransformationBlock = ({ countryCode }: TransformationBlockProps) => {
   return (
     <section className="h-screen flex items-center justify-center px-4 md:px-8 lg:px-16 bg-[#101010]">
       <div className="max-w-7xl w-full grid lg:grid-cols-2 gap-4 md:gap-12 lg:gap-16 items-center">
@@ -19,21 +24,18 @@ const TransformationBlock = () => {
           </p>
           
           <div className="flex justify-center lg:justify-start">
-            <LocalizedClientLink
-              href="/tecnologia"
+            <Link
+              href={`/${countryCode}/tecnologia`} // <--- 3. URL Manual
               className="text-base font-medium tracking-wide px-4 py-2 md:py-3 md:px-5 rounded transition-all duration-300 hover:scale-105 hover:shadow-lg hover:shadow-cyan-500/50 bg-[#00FFFF] text-[#101010] font-inter uppercase"
             >
               Conocer la tecnología
-            </LocalizedClientLink>
+            </Link>
           </div>
         </div>
 
         {/* COLUMNA IMAGEN */}
         <div className="flex items-center justify-center">
           <div className="relative w-full max-w-sm sm:max-w-lg aspect-square">
-            {/* Asegúrate de tener la imagen en: /public/img/transformacion.png
-               'mix-blend-screen' hace que el fondo negro de la imagen se vuelva transparente 
-            */}
             <img 
               src="/img/transformacion.png" 
               alt="Quantum Energy Torus Field"
