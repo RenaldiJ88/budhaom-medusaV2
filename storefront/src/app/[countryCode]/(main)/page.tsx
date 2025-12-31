@@ -37,19 +37,37 @@ export default async function Home({
   return (
     <>
       <Hero countryCode={countryCode} />
+      
       <FeaturedCollections countryCode={countryCode} />
+      
       <TransformationBlock countryCode={countryCode} />
+      
       <BenefitsSection />
+      
       <TransformationVideo countryCode={countryCode} />
+      
       <NatureSpiritSection />
+      
       <DesignCarousel countryCode={countryCode} />
-      <MensajeFinal />
-      <NewsletterSection />
+
+      {/* 1. MOVÍ LOS PRODUCTOS AQUÍ ⬆️
+          Los sacamos del final para que no corten el diseño oscuro del footer.
+          Ahora están después del carrusel de diseño.
+      */}
       <div className="py-12 bg-white">
         <ul className="flex flex-col gap-x-6">
           <FeaturedProducts collections={collections} region={region} />
         </ul>
       </div> 
+
+      {/* 2. CONTENEDOR FINAL OSCURO ⬛
+          Agrupamos el Mensaje Final y el Newsletter en un fondo negro (#101010).
+          Al ser lo último de la página, se fusionará perfectamente con el Footer (que también es #101010).
+      */}
+      <div className="bg-[#101010]">
+        <MensajeFinal />
+        <NewsletterSection />
+      </div>
     </>
   )
 }
