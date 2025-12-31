@@ -1,23 +1,18 @@
 import { Metadata } from "next"
+import "styles/globals.css"
 
-import Footer from "@modules/layout/templates/footer"
-import Nav from "@modules/layout/templates/nav"
-import { getBaseURL } from "@lib/util/env"
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || "https://localhost:8000"
 
 export const metadata: Metadata = {
-  metadataBase: new URL(getBaseURL()),
+  metadataBase: new URL(BASE_URL),
 }
 
-export default async function PageLayout(props: {
-  children: React.ReactNode
-  params: { countryCode: string } // <--- AGREGADO: Capturamos el countryCode
-}) {
+export default function RootLayout(props: { children: React.ReactNode }) {
   return (
-    <>
-      {/* Pasamos el countryCode al componente Nav */}
-      <Nav countryCode={props.params.countryCode} />
-      {props.children}
-      <Footer />
-    </>
+    <html lang="en" data-mode="light">
+      <body>
+        <main className="relative">{props.children}</main>
+      </body>
+    </html>
   )
 }
