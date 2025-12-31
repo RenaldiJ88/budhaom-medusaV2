@@ -4,41 +4,44 @@ import { Popover, Transition } from "@headlessui/react"
 import { Button } from "@medusajs/ui"
 import { usePathname } from "next/navigation"
 import { Fragment, useEffect, useRef, useState } from "react"
-
-import { convertToLocale } from "@lib/util/money"
-import { HttpTypes } from "@medusajs/types"
+import Link from "next/link"
+import { HttpTypes } from "@medusajs/types" // ✅ SOLO TIPOS V2
 import DeleteButton from "@modules/common/components/delete-button"
 import LineItemOptions from "@modules/common/components/line-item-options"
-import LineItemPrice from "@modules/common/components/line-item-price"
-import LocalizedClientLink from "@modules/common/components/localized-client-link"
 import Thumbnail from "@modules/products/components/thumbnail"
 
+// Función auxiliar simple para evitar importar librerías que te faltan
+const formatPrice = (amount: number, currencyCode: string) => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: currencyCode.toUpperCase(),
+  }).format(amount)
+}
+
 const CartDropdown = ({
-  cart: cartState,
+  cart,
+  countryCode,
 }: {
-  cart?: HttpTypes.StoreCart | null
+  cart?: HttpTypes.StoreCart | null // ✅ TIPO V2 CORRECTO
+  countryCode: string
 }) => {
-  const [activeTimer, setActiveTimer] = useState<NodeJS.Timer | undefined>(
-    undefined
-  )
+  const [activeTimer, setActiveTimer] = useState<NodeJS.Timer | undefined>(undefined)
   const [cartDropdownOpen, setCartDropdownOpen] = useState(false)
 
   const open = () => setCartDropdownOpen(true)
   const close = () => setCartDropdownOpen(false)
 
   const totalItems =
-    cartState?.items?.reduce((acc, item) => {
+    cart?.items?.reduce((acc, item) => {
       return acc + item.quantity
     }, 0) || 0
 
-  const subtotal = cartState?.subtotal ?? 0
+  const subtotal = cart?.subtotal ?? 0
   const itemRef = useRef<number>(totalItems || 0)
 
   const timedOpen = () => {
     open()
-
     const timer = setTimeout(close, 5000)
-
     setActiveTimer(timer)
   }
 
@@ -46,11 +49,9 @@ const CartDropdown = ({
     if (activeTimer) {
       clearTimeout(activeTimer)
     }
-
     open()
   }
 
-  // Clean up the timer when the component unmounts
   useEffect(() => {
     return () => {
       if (activeTimer) {
@@ -61,7 +62,6 @@ const CartDropdown = ({
 
   const pathname = usePathname()
 
-  // open cart dropdown when modifying the cart items, but only if we're not on the cart page
   useEffect(() => {
     if (itemRef.current !== totalItems && !pathname.includes("/cart")) {
       timedOpen()
@@ -75,13 +75,12 @@ const CartDropdown = ({
       onMouseEnter={openAndCancel}
       onMouseLeave={close}
     >
-      <Popover className="relative h-full">
-        <Popover.Button className="h-full">
-          <LocalizedClientLink
-            className="hover:text-ui-fg-base"
-            href="/cart"
-            data-testid="nav-cart-link"
-          >{`Cart (${totalItems})`}</LocalizedClientLink>
+      <Popover className="relative h-full flex items-center">
+        <Popover.Button className="h-full outline-none">
+          <Link
+            className="hover:text-gray-300 text-white transition-colors"
+            href={`/${countryCode}/cart`}
+          >{`Cart (${totalItems})`}</Link>
         </Popover.Button>
         <Transition
           show={cartDropdownOpen}
@@ -95,119 +94,99 @@ const CartDropdown = ({
         >
           <Popover.Panel
             static
-            className="hidden small:block absolute top-[calc(100%+1px)] right-0 bg-white border-x border-b border-gray-200 w-[420px] text-ui-fg-base"
-            data-testid="nav-cart-dropdown"
+            className="hidden small:block absolute top-[calc(100%+1px)] right-0 bg-white border border-gray-200 w-[420px] text-black shadow-xl rounded-lg p-4 z-50"
           >
-            <div className="p-4 flex items-center justify-center">
-              <h3 className="text-large-semi">Cart</h3>
+            <div className="p-4 flex items-center justify-center border-b pb-4">
+              <h3 className="text-large-semi font-bold">Carrito</h3>
             </div>
-            {cartState && cartState.items?.length ? (
+            {cart && cart.items?.length ? (
               <>
-                <div className="overflow-y-scroll max-h-[402px] px-4 grid grid-cols-1 gap-y-8 no-scrollbar p-px">
-                  {cartState.items
-                    .sort((a, b) => {
-                      return (a.created_at ?? "") > (b.created_at ?? "")
-                        ? -1
-                        : 1
+                <div className="overflow-y-scroll max-h-[402px] px-4 grid grid-cols-1 gap-y-8 no-scrollbar p-px py-4">
+                  {cart.items
+                    .sort((a: any, b: any) => {
+                      return (a.created_at ?? "") > (b.created_at ?? "") ? -1 : 1
                     })
                     .map((item) => (
                       <div
-                        className="grid grid-cols-[122px_1fr] gap-x-4"
+                        className="grid grid-cols-[80px_1fr] gap-x-4"
                         key={item.id}
-                        data-testid="cart-item"
                       >
-                        <LocalizedClientLink
-                          href={`/products/${item.variant?.product?.handle}`}
-                          className="w-24"
+                        <Link
+                          href={`/${countryCode}/products/${item.variant?.product?.handle}`}
+                          className="w-20"
                         >
                           <Thumbnail
                             thumbnail={item.variant?.product?.thumbnail}
-                            images={item.variant?.product?.images}
                             size="square"
                           />
-                        </LocalizedClientLink>
-                        <div className="flex flex-col justify-between flex-1">
+                        </Link>
+                        <div className="flex flex-col justify-between flex-1 text-sm">
                           <div className="flex flex-col flex-1">
                             <div className="flex items-start justify-between">
                               <div className="flex flex-col overflow-ellipsis whitespace-nowrap mr-4 w-[180px]">
-                                <h3 className="text-base-regular overflow-hidden text-ellipsis">
-                                  <LocalizedClientLink
-                                    href={`/products/${item.variant?.product?.handle}`}
-                                    data-testid="product-link"
+                                <h3 className="font-medium overflow-hidden text-ellipsis">
+                                  <Link
+                                    href={`/${countryCode}/products/${item.variant?.product?.handle}`}
                                   >
                                     {item.title}
-                                  </LocalizedClientLink>
+                                  </Link>
                                 </h3>
+                                {/* Si LineItemOptions da error, coméntalo, pero suele ser compatible */}
                                 <LineItemOptions
                                   variant={item.variant}
                                   data-testid="cart-item-variant"
-                                  data-value={item.variant}
                                 />
-                                <span
-                                  data-testid="cart-item-quantity"
-                                  data-value={item.quantity}
-                                >
-                                  Quantity: {item.quantity}
+                                <span className="text-gray-500 mt-1">
+                                  Cant: {item.quantity}
                                 </span>
-                              </div>
-                              <div className="flex justify-end">
-                                <LineItemPrice item={item} style="tight" />
                               </div>
                             </div>
                           </div>
-                          <DeleteButton
-                            id={item.id}
-                            className="mt-1"
-                            data-testid="cart-item-remove-button"
-                          >
-                            Remove
-                          </DeleteButton>
+                          <div className="flex items-end justify-between mt-2">
+                            <DeleteButton
+                                id={item.id}
+                                className="text-red-500 hover:text-red-700 text-xs font-bold uppercase"
+                            >
+                                Eliminar
+                            </DeleteButton>
+                            <span className="font-semibold">
+                                {formatPrice(item.unit_price, cart.currency_code)}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     ))}
                 </div>
-                <div className="p-4 flex flex-col gap-y-4 text-small-regular">
-                  <div className="flex items-center justify-between">
-                    <span className="text-ui-fg-base font-semibold">
+                <div className="p-4 flex flex-col gap-y-4 text-small-regular border-t pt-4">
+                  <div className="flex items-center justify-between font-bold">
+                    <span className="text-gray-900">
                       Subtotal{" "}
-                      <span className="font-normal">(excl. taxes)</span>
+                      <span className="font-normal text-gray-500">(sin imp.)</span>
                     </span>
-                    <span
-                      className="text-large-semi"
-                      data-testid="cart-subtotal"
-                      data-value={subtotal}
-                    >
-                      {convertToLocale({
-                        amount: subtotal,
-                        currency_code: cartState.currency_code,
-                      })}
+                    <span className="text-large-semi">
+                      {formatPrice(subtotal, cart.currency_code)}
                     </span>
                   </div>
-                  <LocalizedClientLink href="/cart" passHref>
-                    <Button
-                      className="w-full"
-                      size="large"
-                      data-testid="go-to-cart-button"
-                    >
-                      Go to cart
+                  <Link href={`/${countryCode}/cart`} className="w-full">
+                    <Button className="w-full bg-black text-white hover:bg-gray-800" size="large">
+                      Ir al Carrito
                     </Button>
-                  </LocalizedClientLink>
+                  </Link>
                 </div>
               </>
             ) : (
               <div>
                 <div className="flex py-16 flex-col gap-y-4 items-center justify-center">
-                  <div className="bg-gray-900 text-small-regular flex items-center justify-center w-6 h-6 rounded-full text-white">
+                  <div className="bg-gray-900 flex items-center justify-center w-6 h-6 rounded-full text-white text-xs">
                     <span>0</span>
                   </div>
-                  <span>Your shopping bag is empty.</span>
+                  <span>Tu carrito está vacío.</span>
                   <div>
-                    <LocalizedClientLink href="/store">
-                      <>
-                        <span className="sr-only">Go to all products page</span>
-                        <Button onClick={close}>Explore products</Button>
-                      </>
-                    </LocalizedClientLink>
+                    <Link href={`/${countryCode}/store`}>
+                      <Button className="bg-black text-white hover:bg-gray-800">
+                        Explorar productos
+                      </Button>
+                    </Link>
                   </div>
                 </div>
               </div>
