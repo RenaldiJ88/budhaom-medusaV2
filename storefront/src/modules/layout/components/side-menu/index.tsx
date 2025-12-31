@@ -1,10 +1,10 @@
 "use client"
 
-import { Popover, Transition } from "@headlessui/react"
+// Eliminamos Popover y Transition para evitar errores de hidratación
 import { ArrowRightMini, XMark } from "@medusajs/icons"
 import { Text, clx, useToggleState } from "@medusajs/ui"
-import { Fragment } from "react"
-import Link from "next/link" // <--- CAMBIO
+import { useState } from "react" // Usamos useState estándar
+import Link from "next/link"
 import CountrySelect from "../country-select"
 import { HttpTypes } from "@medusajs/types"
 
@@ -17,82 +17,89 @@ const SideMenuItems = {
 }
 
 const SideMenu = ({ regions, countryCode }: { regions: HttpTypes.StoreRegion[] | null, countryCode: string }) => {
-  const toggleState = useToggleState()
+  const toggleState = useToggleState() // Para el country select
+  
+  // ESTADO MANUAL: Reemplaza al Popover
+  const [isOpen, setIsOpen] = useState(false)
+
+  const openMenu = () => setIsOpen(true)
+  const closeMenu = () => setIsOpen(false)
 
   return (
     <div className="h-full">
       <div className="flex items-center h-full">
-        <Popover className="h-full flex">
-          {({ open, close }) => (
-            <>
-              <div className="relative flex h-full">
-                <Popover.Button
-                  className="relative h-full flex items-center transition-all ease-out duration-200 focus:outline-none hover:text-ui-fg-base"
-                >
-                  Menu
-                </Popover.Button>
-              </div>
+        
+        {/* 1. BOTÓN DE APERTURA */}
+        <button
+          onClick={openMenu}
+          className="relative h-full flex items-center transition-all ease-out duration-200 focus:outline-none hover:text-gray-300 text-white font-inter"
+        >
+          Menu
+        </button>
 
-              <Transition
-                show={open}
-                as={Fragment}
-                enter="transition ease-out duration-150"
-                enterFrom="opacity-0"
-                enterTo="opacity-100 backdrop-blur-2xl"
-                leave="transition ease-in duration-150"
-                leaveFrom="opacity-100 backdrop-blur-2xl"
-                leaveTo="opacity-0"
-              >
-                <Popover.Panel className="flex flex-col absolute w-full pr-4 sm:pr-0 sm:w-1/3 2xl:w-1/4 sm:min-w-min h-[calc(100vh-1rem)] z-30 inset-x-0 text-sm text-ui-fg-on-color m-2 backdrop-blur-2xl">
-                  <div
-                    className="flex flex-col h-full bg-[rgba(3,7,18,0.95)] rounded-rounded justify-between p-6"
-                  >
-                    <div className="flex justify-end" id="xmark">
-                      <button onClick={close} className="text-white">
-                        <XMark />
-                      </button>
-                    </div>
-                    <ul className="flex flex-col gap-6 items-start justify-start text-white">
-                      {Object.entries(SideMenuItems).map(([name, href]) => {
-                        return (
-                          <li key={name}>
-                            <Link
-                              href={`/${countryCode}${href}`} // <--- URL Manual
-                              className="text-3xl leading-10 hover:text-gray-300"
-                              onClick={close}
+        {/* 2. PANEL LATERAL (Renderizado Condicional Puro) */}
+        {isOpen && (
+            <div className="relative z-50">
+                {/* FONDO OSCURO (Backdrop) */}
+                <div 
+                    className="fixed inset-0 bg-black/40 backdrop-blur-sm transition-opacity animate-in fade-in duration-200" 
+                    onClick={closeMenu} // Cierra al hacer clic fuera
+                />
+
+                {/* EL MENÚ EN SÍ */}
+                <div className="fixed inset-y-0 right-0 flex max-w-full pl-10 pointer-events-none">
+                    <div className="w-screen max-w-md pointer-events-auto bg-[rgba(3,7,18,0.95)] border-l border-gray-800 shadow-xl h-full flex flex-col p-6 backdrop-blur-2xl animate-in slide-in-from-right duration-300">
+                        
+                        {/* BOTÓN CERRAR */}
+                        <div className="flex justify-end mb-8">
+                            <button onClick={closeMenu} className="text-white hover:text-gray-300 transition-colors">
+                                <XMark className="h-6 w-6" />
+                            </button>
+                        </div>
+
+                        {/* LISTA DE ENLACES */}
+                        <ul className="flex flex-col gap-6 items-start justify-start text-white flex-1">
+                            {Object.entries(SideMenuItems).map(([name, href]) => {
+                                return (
+                                <li key={name}>
+                                    <Link
+                                    href={`/${countryCode}${href}`}
+                                    className="text-3xl leading-10 hover:text-cyan-400 transition-colors font-poppins font-light"
+                                    onClick={closeMenu}
+                                    >
+                                    {name}
+                                    </Link>
+                                </li>
+                                )
+                            })}
+                        </ul>
+
+                        {/* PIE DEL MENÚ (Selector de País) */}
+                        <div className="flex flex-col gap-y-6 border-t border-gray-800 pt-6">
+                            <div
+                                className="flex justify-between text-white cursor-pointer hover:text-gray-300"
+                                onMouseEnter={toggleState.open}
+                                onMouseLeave={toggleState.close}
                             >
-                              {name}
-                            </Link>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                    <div className="flex flex-col gap-y-6">
-                      <div
-                        className="flex justify-between text-white"
-                        onMouseEnter={toggleState.open}
-                        onMouseLeave={toggleState.close}
-                      >
-                        {regions && (
-                          <CountrySelect toggleState={toggleState} regions={regions} />
-                        )}
-                        <ArrowRightMini
-                          className={clx(
-                            "transition-transform duration-150",
-                            toggleState.state ? "-rotate-90" : ""
-                          )}
-                        />
-                      </div>
-                      <Text className="flex justify-between txt-compact-small text-gray-400">
-                        © {new Date().getFullYear()} Budha.Om. All rights reserved.
-                      </Text>
+                                {regions && (
+                                <CountrySelect toggleState={toggleState} regions={regions} />
+                                )}
+                                <ArrowRightMini
+                                className={clx(
+                                    "transition-transform duration-150",
+                                    toggleState.state ? "-rotate-90" : ""
+                                )}
+                                />
+                            </div>
+                            <Text className="flex justify-between txt-compact-small text-gray-500">
+                                © {new Date().getFullYear()} Budha.Om. All rights reserved.
+                            </Text>
+                        </div>
+
                     </div>
-                  </div>
-                </Popover.Panel>
-              </Transition>
-            </>
-          )}
-        </Popover>
+                </div>
+            </div>
+        )}
       </div>
     </div>
   )
