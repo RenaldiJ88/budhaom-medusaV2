@@ -12,6 +12,9 @@ import FeaturedProducts from "@modules/home/components/featured-products"
 import { getCollectionsWithProducts } from "@lib/data/collections"
 import { getRegion } from "@lib/data/regions"
 
+// 👇 ¡ESTA ES LA SOLUCIÓN AL ERROR DYNAMIC_SERVER_USAGE! 👇
+export const dynamic = "force-dynamic"
+
 export const metadata: Metadata = {
   title: "Budha.Om | Vestí tu esencia",
   description: "Tienda de ropa con tecnología cuántica y espiritualidad.",
@@ -31,7 +34,6 @@ export default async function Home({
 
   return (
     <>
-      {/* 1. AQUÍ ESTABA EL CULPABLE: Pasamos countryCode al Hero */}
       <Hero countryCode={countryCode} />
       
       <FeaturedCollections countryCode={countryCode} />
@@ -51,7 +53,6 @@ export default async function Home({
           <FeaturedProducts collections={collections} region={region} />
         </ul>
       </div> 
-
     </>
   )
 }
