@@ -8,6 +8,8 @@ import TransformationVideo from "@modules/home/components/transformation-video"
 import NatureSpiritSection from "@modules/home/components/nature-spirit-section"
 import DesignCarousel from "@modules/home/components/design-carousel"
 import FeaturedProducts from "@modules/home/components/featured-products"
+import MensajeFinal from "@modules/home/components/mensaje-final"
+import NewsletterSection from "@modules/home/components/newsletter-section"
 
 import { getCollectionsWithProducts } from "@lib/data/collections"
 import { getRegion } from "@lib/data/regions"
@@ -35,19 +37,14 @@ export default async function Home({
   return (
     <>
       <Hero countryCode={countryCode} />
-      
       <FeaturedCollections countryCode={countryCode} />
-      
       <TransformationBlock countryCode={countryCode} />
-      
       <BenefitsSection />
-      
       <TransformationVideo countryCode={countryCode} />
-      
       <NatureSpiritSection />
-      
       <DesignCarousel countryCode={countryCode} />
-
+      <MensajeFinal />
+      <NewsletterSection />
       <div className="py-12 bg-white">
         <ul className="flex flex-col gap-x-6">
           <FeaturedProducts collections={collections} region={region} />
