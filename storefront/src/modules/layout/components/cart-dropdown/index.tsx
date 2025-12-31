@@ -74,20 +74,26 @@ const CartDropdown = ({
       onMouseEnter={openAndCancel}
       onMouseLeave={close}
     >
-      {/* SOLUCIÓN AL ERROR DE HIDRATACIÓN:
-         En lugar de usar <Popover.Button as={Link}> que confunde a React/HeadlessUI,
-         usamos un Link nativo simple y limpio.
-         El dropdown se controla solo con el hover del div padre.
-      */}
-      <Link
-        href={`/${countryCode}/cart`}
-        className="hover:text-gray-300 text-white transition-colors h-full flex items-center outline-none"
-      >
-        {`Cart (${totalItems})`}
-      </Link>
+      <Popover className="relative h-full flex items-center">
+        {/* 1. EL LINK REAL (Visible): 
+            Maneja la navegación al hacer clic y se ve como el botón.
+        */}
+        <Link
+          href={`/${countryCode}/cart`}
+          className="hover:text-gray-300 text-white transition-colors h-full flex items-center outline-none"
+        >
+          {`Cart (${totalItems})`}
+        </Link>
 
-      {/* El Popover solo envuelve el panel desplegable, no el botón */}
-      <Popover className="relative">
+        {/* 2. EL BOTÓN FANTASMA (Oculto): 
+            Necesario estrictamente para que Headless UI no rompa la hidratación.
+            No se ve (className="hidden"), pero satisface la lógica interna de la librería.
+        */}
+        <Popover.Button className="hidden" aria-hidden="true" />
+
+        {/* 3. EL PANEL DESPLEGABLE:
+            Se controla mediante el estado 'cartDropdownOpen' (show={cartDropdownOpen})
+        */}
         <Transition
           show={cartDropdownOpen}
           as={Fragment}
