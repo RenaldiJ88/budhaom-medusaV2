@@ -1,35 +1,23 @@
-import { getBaseURL } from "@lib/util/env"
 import { Metadata } from "next"
-// 1. Agregamos la importación de fuentes de Google
-import { Inter, Poppins } from "next/font/google" 
-import "styles/globals.css"
 
-// 2. Configuramos la fuente Inter (Cuerpo de texto)
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  display: "swap",
-})
-
-// 3. Configuramos la fuente Poppins (Títulos)
-const poppins = Poppins({
-  weight: ["400", "600", "700"], // Pesos: Regular, SemiBold, Bold
-  subsets: ["latin"],
-  variable: "--font-poppins",
-  display: "swap",
-})
+import Footer from "@modules/layout/templates/footer"
+import Nav from "@modules/layout/templates/nav"
+import { getBaseURL } from "@lib/util/env"
 
 export const metadata: Metadata = {
   metadataBase: new URL(getBaseURL()),
 }
 
-export default function RootLayout(props: { children: React.ReactNode }) {
+export default async function PageLayout(props: {
+  children: React.ReactNode
+  params: { countryCode: string } // <--- AGREGADO: Capturamos el countryCode
+}) {
   return (
-    // 4. Inyectamos las variables de las fuentes en el HTML
-    <html lang="en" data-mode="light" className={`${inter.variable} ${poppins.variable}`}>
-      <body>
-        <main className="relative">{props.children}</main>
-      </body>
-    </html>
+    <>
+      {/* Pasamos el countryCode al componente Nav */}
+      <Nav countryCode={props.params.countryCode} />
+      {props.children}
+      <Footer />
+    </>
   )
 }
