@@ -10,7 +10,6 @@ import DeleteButton from "@modules/common/components/delete-button"
 import LineItemOptions from "@modules/common/components/line-item-options"
 import Thumbnail from "@modules/products/components/thumbnail"
 
-// Función auxiliar
 const formatPrice = (amount: number, currencyCode: string) => {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -25,7 +24,6 @@ const CartDropdown = ({
   cart?: HttpTypes.StoreCart | null
   countryCode: string
 }) => {
-  // Usamos 'ReturnType<typeof setTimeout>' para evitar error de NodeJS.Timer en navegador
   const [activeTimer, setActiveTimer] = useState<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [cartDropdownOpen, setCartDropdownOpen] = useState(false)
 
@@ -72,23 +70,24 @@ const CartDropdown = ({
 
   return (
     <div
-      className="h-full z-50"
+      className="h-full z-50 flex items-center"
       onMouseEnter={openAndCancel}
       onMouseLeave={close}
     >
-      <Popover className="relative h-full flex items-center">
-        {/* 🔴 CAMBIO CRÍTICO AQUÍ:
-            Antes: <Popover.Button><Link>...</Link></Popover.Button> (ILEGAL: a dentro de button)
-            Ahora: <Popover.Button as={Link} ...> (LEGAL: el botón SE COMPORTA como un link)
-        */}
-        <Popover.Button
-            as={Link}
-            href={`/${countryCode}/cart`}
-            className="h-full outline-none hover:text-gray-300 text-white transition-colors flex items-center"
-        >
-            {`Cart (${totalItems})`}
-        </Popover.Button>
+      {/* SOLUCIÓN AL ERROR DE HIDRATACIÓN:
+         En lugar de usar <Popover.Button as={Link}> que confunde a React/HeadlessUI,
+         usamos un Link nativo simple y limpio.
+         El dropdown se controla solo con el hover del div padre.
+      */}
+      <Link
+        href={`/${countryCode}/cart`}
+        className="hover:text-gray-300 text-white transition-colors h-full flex items-center outline-none"
+      >
+        {`Cart (${totalItems})`}
+      </Link>
 
+      {/* El Popover solo envuelve el panel desplegable, no el botón */}
+      <Popover className="relative">
         <Transition
           show={cartDropdownOpen}
           as={Fragment}
@@ -101,7 +100,7 @@ const CartDropdown = ({
         >
           <Popover.Panel
             static
-            className="hidden small:block absolute top-[calc(100%+1px)] right-0 bg-white border border-gray-200 w-[420px] text-black shadow-xl rounded-lg p-4 z-50"
+            className="hidden small:block absolute top-[calc(100%+20px)] right-0 bg-white border border-gray-200 w-[420px] text-black shadow-xl rounded-lg p-4 z-50"
           >
             <div className="p-4 flex items-center justify-center border-b pb-4">
               <h3 className="text-large-semi font-bold">Carrito</h3>
@@ -150,13 +149,13 @@ const CartDropdown = ({
                           </div>
                           <div className="flex items-end justify-between mt-2">
                             <DeleteButton
-                                id={item.id}
-                                className="text-red-500 hover:text-red-700 text-xs font-bold uppercase"
+                              id={item.id}
+                              className="text-red-500 hover:text-red-700 text-xs font-bold uppercase"
                             >
-                                Eliminar
+                              Eliminar
                             </DeleteButton>
                             <span className="font-semibold">
-                                {formatPrice(item.unit_price, cart.currency_code)}
+                              {formatPrice(item.unit_price, cart.currency_code)}
                             </span>
                           </div>
                         </div>
@@ -167,14 +166,19 @@ const CartDropdown = ({
                   <div className="flex items-center justify-between font-bold">
                     <span className="text-gray-900">
                       Subtotal{" "}
-                      <span className="font-normal text-gray-500">(sin imp.)</span>
+                      <span className="font-normal text-gray-500">
+                        (sin imp.)
+                      </span>
                     </span>
                     <span className="text-large-semi">
                       {formatPrice(subtotal, cart.currency_code)}
                     </span>
                   </div>
                   <Link href={`/${countryCode}/cart`} className="w-full">
-                    <Button className="w-full bg-black text-white hover:bg-gray-800" size="large">
+                    <Button
+                      className="w-full bg-black text-white hover:bg-gray-800"
+                      size="large"
+                    >
                       Ir al Carrito
                     </Button>
                   </Link>
