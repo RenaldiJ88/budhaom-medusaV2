@@ -5,12 +5,12 @@ import { Button } from "@medusajs/ui"
 import { usePathname } from "next/navigation"
 import { Fragment, useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { HttpTypes } from "@medusajs/types" // ✅ SOLO TIPOS V2
+import { HttpTypes } from "@medusajs/types"
 import DeleteButton from "@modules/common/components/delete-button"
 import LineItemOptions from "@modules/common/components/line-item-options"
 import Thumbnail from "@modules/products/components/thumbnail"
 
-// Función auxiliar simple para evitar importar librerías que te faltan
+// Función auxiliar
 const formatPrice = (amount: number, currencyCode: string) => {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -22,10 +22,11 @@ const CartDropdown = ({
   cart,
   countryCode,
 }: {
-  cart?: HttpTypes.StoreCart | null // ✅ TIPO V2 CORRECTO
+  cart?: HttpTypes.StoreCart | null
   countryCode: string
 }) => {
-  const [activeTimer, setActiveTimer] = useState<NodeJS.Timer | undefined>(undefined)
+  // Usamos 'ReturnType<typeof setTimeout>' para evitar error de NodeJS.Timer en navegador
+  const [activeTimer, setActiveTimer] = useState<ReturnType<typeof setTimeout> | undefined>(undefined)
   const [cartDropdownOpen, setCartDropdownOpen] = useState(false)
 
   const open = () => setCartDropdownOpen(true)
@@ -76,12 +77,18 @@ const CartDropdown = ({
       onMouseLeave={close}
     >
       <Popover className="relative h-full flex items-center">
-        <Popover.Button className="h-full outline-none">
-          <Link
-            className="hover:text-gray-300 text-white transition-colors"
+        {/* 🔴 CAMBIO CRÍTICO AQUÍ:
+            Antes: <Popover.Button><Link>...</Link></Popover.Button> (ILEGAL: a dentro de button)
+            Ahora: <Popover.Button as={Link} ...> (LEGAL: el botón SE COMPORTA como un link)
+        */}
+        <Popover.Button
+            as={Link}
             href={`/${countryCode}/cart`}
-          >{`Cart (${totalItems})`}</Link>
+            className="h-full outline-none hover:text-gray-300 text-white transition-colors flex items-center"
+        >
+            {`Cart (${totalItems})`}
         </Popover.Button>
+
         <Transition
           show={cartDropdownOpen}
           as={Fragment}
@@ -131,7 +138,6 @@ const CartDropdown = ({
                                     {item.title}
                                   </Link>
                                 </h3>
-                                {/* Si LineItemOptions da error, coméntalo, pero suele ser compatible */}
                                 <LineItemOptions
                                   variant={item.variant}
                                   data-testid="cart-item-variant"
