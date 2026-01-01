@@ -14,7 +14,7 @@ export default async function Footer() {
           {/* COLUMNA 1: LOGO Y COPYRIGHT */}
           <div className="col-span-2 md:col-span-1 text-center md:text-left flex flex-col items-center md:items-start">
             {/* REEMPLAZA ESTA LÍNEA CON LA RUTA A TU LOGO */}
-            <img src="/img/logo.png" alt="BUDHA.Om Logo" className="mb-4 h-12 w-auto" />
+            <img src="/img/budha-logo2.png" alt="BUDHA.Om Logo" className="mb-4 h-12 w-auto" />
             {/* Si no tienes imagen y quieres el texto, descomenta esto:
             <h3 className="mb-4 font-poppins text-2xl font-bold text-white uppercase tracking-widest">
               BUDHA.Om
