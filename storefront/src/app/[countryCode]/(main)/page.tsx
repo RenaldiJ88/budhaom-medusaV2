@@ -54,7 +54,7 @@ export default async function Home({
           Los sacamos del final para que no corten el diseño oscuro del footer.
           Ahora están después del carrusel de diseño.
       */}
-      <div className="py-12 bg-white">
+      <div className="bg-white">
         <ul className="flex flex-col gap-x-6">
           <FeaturedProducts collections={collections} region={region} />
         </ul>
