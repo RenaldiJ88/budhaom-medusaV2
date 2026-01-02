@@ -1,158 +1,126 @@
 "use client"
 
-import { Button } from "@medusajs/ui"
-import Link from "next/link"
+import { Popover, Transition } from "@headlessui/react"
+import { Fragment } from "react"
+import { usePathname } from "next/navigation"
+
 import { HttpTypes } from "@medusajs/types"
-import DeleteButton from "@modules/common/components/delete-button"
-import LineItemOptions from "@modules/common/components/line-item-options"
-import Thumbnail from "@modules/products/components/thumbnail"
-// Eliminamos @headlessui/react por completo para evitar el crash
+import LocalizedClientLink from "@modules/common/components/localized-client-link"
+import { convertToLocale } from "@lib/util/money"
 
-const formatPrice = (amount: number, currencyCode: string) => {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currencyCode.toUpperCase(),
-  }).format(amount)
-}
-
-const CartDropdown = ({
-  cart,
-  countryCode,
-}: {
-  cart?: HttpTypes.StoreCart | null
-  countryCode: string
-}) => {
-  
-  const totalItems =
-    cart?.items?.reduce((acc, item) => {
-      return acc + item.quantity
-    }, 0) || 0
-
-  const subtotal = cart?.subtotal ?? 0
-
+// Componente para mostrar cada ítem individualmente
+const Item = ({ item, region, countryCode }: { item: any, region: any, countryCode: string }) => {
   return (
-    // USAMOS LA CLASE 'group' PARA DETECTAR EL HOVER
-    <div className="h-full z-50 flex items-center relative group">
-      
-      {/* 1. EL ENLACE AL CARRITO (Visible siempre) */}
-      <Link
-        href={`/${countryCode}/cart`}
-        className="hover:text-gray-300 text-white transition-colors h-full flex items-center outline-none py-4"
+    <div className="grid grid-cols-[60px_1fr] gap-x-4 mb-4" data-testid="cart-item">
+      {/* IMAGEN DEL PRODUCTO (Con Link) */}
+      <LocalizedClientLink
+        href={`/products/${item.variant?.product?.handle}`}
+        className="w-[60px] h-[80px] bg-gray-100 rounded overflow-hidden relative"
       >
-        {`Cart (${totalItems})`}
-      </Link>
+        <img
+          src={item.thumbnail}
+          alt={item.title}
+          className="absolute inset-0 w-full h-full object-cover"
+        />
+      </LocalizedClientLink>
 
-      {/* 2. EL PANEL DESPLEGABLE (CSS Puro)
-          hidden = oculto por defecto
-          group-hover:block = visible cuando pasas el mouse por el padre
-      */}
-      <div className="hidden group-hover:block absolute top-[calc(100%-10px)] right-0 pt-4 z-50 w-[420px]">
-        {/* Fondo blanco y borde */}
-        <div className="bg-white border border-gray-200 text-black shadow-xl rounded-lg p-4">
-            <div className="p-4 flex items-center justify-center border-b pb-4">
-              <h3 className="text-large-semi font-bold">Carrito</h3>
-            </div>
-            
-            {cart && cart.items?.length ? (
-              <>
-                <div className="overflow-y-scroll max-h-[402px] px-4 grid grid-cols-1 gap-y-8 no-scrollbar p-px py-4">
-                  {cart.items
-                    .sort((a: any, b: any) => {
-                      return (a.created_at ?? "") > (b.created_at ?? "") ? -1 : 1
-                    })
-                    .map((item) => (
-                      <div
-                        className="grid grid-cols-[80px_1fr] gap-x-4"
-                        key={item.id}
-                      >
-                        <Link
-                          href={`/${countryCode}/products/${item.variant?.product?.handle}`}
-                          className="w-20"
-                        >
-                          <Thumbnail
-                            thumbnail={item.variant?.product?.thumbnail}
-                            size="square"
-                          />
-                        </Link>
-                        <div className="flex flex-col justify-between flex-1 text-sm">
-                          <div className="flex flex-col flex-1">
-                            <div className="flex items-start justify-between">
-                              <div className="flex flex-col overflow-ellipsis whitespace-nowrap mr-4 w-[180px]">
-                                <h3 className="font-medium overflow-hidden text-ellipsis">
-                                  <Link
-                                    href={`/${countryCode}/products/${item.variant?.product?.handle}`}
-                                  >
-                                    {item.title}
-                                  </Link>
-                                </h3>
-                                <LineItemOptions
-                                  variant={item.variant}
-                                  data-testid="cart-item-variant"
-                                />
-                                <span className="text-gray-500 mt-1">
-                                  Cant: {item.quantity}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-end justify-between mt-2">
-                            <DeleteButton
-                              id={item.id}
-                              className="text-red-500 hover:text-red-700 text-xs font-bold uppercase"
-                            >
-                              Eliminar
-                            </DeleteButton>
-                            <span className="font-semibold">
-                              {formatPrice(item.unit_price, cart.currency_code)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                </div>
-                <div className="p-4 flex flex-col gap-y-4 text-small-regular border-t pt-4">
-                  <div className="flex items-center justify-between font-bold">
-                    <span className="text-gray-900">
-                      Subtotal{" "}
-                      <span className="font-normal text-gray-500">
-                        (sin imp.)
-                      </span>
-                    </span>
-                    <span className="text-large-semi">
-                      {formatPrice(subtotal, cart.currency_code)}
-                    </span>
-                  </div>
-                  <Link href={`/${countryCode}/cart`} className="w-full">
-                    <Button
-                      className="w-full bg-black text-white hover:bg-gray-800"
-                      size="large"
-                    >
-                      Ir al Carrito
-                    </Button>
-                  </Link>
-                </div>
-              </>
-            ) : (
-              <div>
-                <div className="flex py-16 flex-col gap-y-4 items-center justify-center">
-                  <div className="bg-gray-900 flex items-center justify-center w-6 h-6 rounded-full text-white text-xs">
-                    <span>0</span>
-                  </div>
-                  <span>Tu carrito está vacío.</span>
-                  <div>
-                    <Link href={`/${countryCode}/store`}>
-                      <Button className="bg-black text-white hover:bg-gray-800">
-                        Explorar productos
-                      </Button>
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            )}
+      <div className="flex flex-col justify-between text-sm">
+        <div className="flex flex-col">
+          {/* NOMBRE DEL PRODUCTO (Con Link) */}
+          <LocalizedClientLink
+            href={`/products/${item.variant?.product?.handle}`}
+            className="font-semibold text-white hover:text-gray-300 transition-colors line-clamp-2"
+          >
+            {item.title}
+          </LocalizedClientLink>
+          
+          {/* VARIANTE (Talle, Color, etc) */}
+          <span className="text-gray-400 text-xs mt-1">
+            {item.variant?.title}
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between mt-2">
+          <span className="text-gray-300">
+            Cant: {item.quantity}
+          </span>
+          <span className="text-white font-medium">
+             {convertToLocale({
+                amount: item.unit_price,
+                currency_code: region.currency_code,
+              })}
+          </span>
         </div>
       </div>
     </div>
   )
 }
 
-export default CartDropdown
+export default function CartDropdown({
+  cart,
+  countryCode,
+}: {
+  cart?: HttpTypes.StoreCart | null
+  countryCode: string
+}) {
+  const pathname = usePathname()
+
+  return (
+    <div className="h-full z-50" onMouseEnter={() => {}} onMouseLeave={() => {}}>
+      <Popover className="relative h-full">
+        <Popover.Button className="h-full flex items-center gap-2 hover:opacity-80 transition-opacity focus:outline-none">
+          <span className="text-white font-[Inter,sans-serif] uppercase text-sm tracking-widest">
+            Cart ({cart?.items?.length || 0})
+          </span>
+        </Popover.Button>
+        <Transition
+          as={Fragment}
+          enter="transition ease-out duration-200"
+          enterFrom="opacity-0 translate-y-1"
+          enterTo="opacity-100 translate-y-0"
+          leave="transition ease-in duration-150"
+          leaveFrom="opacity-100 translate-y-0"
+          leaveTo="opacity-0 translate-y-1"
+        >
+          <Popover.Panel className="absolute top-full right-0 mt-2 w-80 origin-top-right bg-[#111111] border border-gray-800 p-4 shadow-xl rounded-lg z-50 max-h-[80vh] overflow-y-auto">
+            {cart && cart.items?.length > 0 ? (
+              <>
+                <div className="flex flex-col gap-y-2 mb-4">
+                  {cart.items.map((item) => (
+                    <Item
+                      key={item.id}
+                      item={item}
+                      region={cart.region}
+                      countryCode={countryCode}
+                    />
+                  ))}
+                </div>
+                <div className="flex flex-col gap-y-4 text-sm border-t border-gray-800 pt-4">
+                  <div className="flex items-center justify-between text-white font-semibold">
+                    <span>Subtotal</span>
+                    <span>
+                      {convertToLocale({
+                        amount: cart.subtotal || 0,
+                        currency_code: cart.region?.currency_code,
+                      })}
+                    </span>
+                  </div>
+                  <LocalizedClientLink
+                    href="/cart"
+                    className="w-full bg-[#00FFFF] text-black font-bold text-center py-3 rounded-full hover:opacity-90 transition-opacity uppercase tracking-wider text-xs"
+                  >
+                    Ir al Carrito
+                  </LocalizedClientLink>
+                </div>
+              </>
+            ) : (
+              <div className="py-8 flex flex-col items-center justify-center">
+                <p className="text-gray-400 text-sm">Tu carrito está vacío.</p>
+              </div>
+            )}
+          </Popover.Panel>
+        </Transition>
+      </Popover>
+    </div>
+  )
+}
