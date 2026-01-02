@@ -3,7 +3,7 @@
 @import "tailwindcss/utilities";
 
 @layer utilities {
-  /* Chrome, Safari and Opera */
+  /* --- TUS CLASES ORIGINALES --- */
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
@@ -16,6 +16,27 @@
     -ms-overflow-style: none; /* IE and Edge */
     scrollbar-width: none; /* Firefox */
   }
+
+  /* --- AGREGADO: LÓGICA DE SCROLL SNAP --- */
+  /* Esta clase va en el contenedor principal (el <main>) */
+  .snap-container {
+    scroll-snap-type: y mandatory;
+    overflow-y: scroll;
+    height: 100vh;
+    scroll-behavior: smooth;
+  }
+
+  /* Esta clase va en cada sección individual (<section>) */
+  .snap-section {
+    scroll-snap-align: start;
+    height: 100vh;
+    width: 100%;
+    position: relative;
+    /* Asegura que el contenido no se corte */
+    overflow: hidden; 
+  }
+
+  /* --- FIN DEL AGREGADO --- */
 
   input:focus ~ label,
   input:not(:placeholder-shown) ~ label {

@@ -1,14 +1,24 @@
 import { Metadata } from "next"
 
-import FeaturedProducts from "@modules/home/components/featured-products"
 import Hero from "@modules/home/components/hero"
+import FeaturedCollections from "@modules/home/components/featured-collections"
+import TransformationBlock from "@modules/home/components/transformation-block"
+import BenefitsSection from "@modules/home/components/benefits-section"
+import TransformationVideo from "@modules/home/components/transformation-video"
+import NatureSpiritSection from "@modules/home/components/nature-spirit-section"
+import DesignCarousel from "@modules/home/components/design-carousel"
+import MensajeFinal from "@modules/home/components/mensaje-final"
+import NewsletterSection from "@modules/home/components/newsletter-section"
+
 import { getCollectionsWithProducts } from "@lib/data/collections"
 import { getRegion } from "@lib/data/regions"
 
+// 👇 ¡ESTA ES LA SOLUCIÓN AL ERROR DYNAMIC_SERVER_USAGE! 👇
+export const dynamic = "force-dynamic"
+
 export const metadata: Metadata = {
-  title: "Medusa Next.js Starter Template",
-  description:
-    "A performant frontend ecommerce starter template with Next.js 14 and Medusa.",
+  title: "Budha.Om | Vestí tu esencia",
+  description: "Tienda de ropa con tecnología cuántica y espiritualidad.",
 }
 
 export default async function Home({
@@ -25,11 +35,23 @@ export default async function Home({
 
   return (
     <>
-      <Hero />
-      <div className="py-12">
-        <ul className="flex flex-col gap-x-6">
-          <FeaturedProducts collections={collections} region={region} />
-        </ul>
+      <Hero countryCode={countryCode} />
+      
+      <FeaturedCollections countryCode={countryCode} />
+      
+      <TransformationBlock countryCode={countryCode} />
+      
+      <BenefitsSection />
+      
+      <TransformationVideo countryCode={countryCode} />
+      
+      <NatureSpiritSection />
+      
+      <DesignCarousel countryCode={countryCode} />
+
+      <div className="bg-[#101010]">
+        <MensajeFinal />
+        <NewsletterSection />
       </div>
     </>
   )
