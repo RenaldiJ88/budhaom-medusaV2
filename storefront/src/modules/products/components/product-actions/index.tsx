@@ -4,7 +4,6 @@ import { isEqual } from "lodash"
 import { useParams, useRouter } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
 
-import { useIntersection } from "@lib/hooks/use-in-view"
 import OptionSelect from "@modules/products/components/product-actions/option-select"
 import ProductPrice from "../product-price"
 import { addToCart } from "@lib/data/cart"
@@ -109,7 +108,7 @@ export default function ProductActions({
 
       {/* SELECTOR DE CANTIDAD */}
       <div className="mb-2">
-        <label className="block text-white mb-3 text-sm font-semibold font-[Inter,sans-serif]">CANTIDAD</label>
+        <label className="block text-white mb-3 text-sm font-semibold font-inter">CANTIDAD</label>
         <div className="flex items-center gap-3">
           <button 
             onClick={decreaseQuantity}
@@ -118,7 +117,7 @@ export default function ProductActions({
           >
             &minus;
           </button>
-          <div className="w-16 md:w-20 h-12 flex items-center justify-center rounded border border-gray-600 bg-[#1a1a1a] text-white font-semibold font-[Inter,sans-serif]">
+          <div className="w-16 md:w-20 h-12 flex items-center justify-center rounded border border-gray-600 bg-[#1a1a1a] text-white font-semibold font-inter">
             {quantity}
           </div>
           <button 
@@ -136,9 +135,8 @@ export default function ProductActions({
         onClick={handleAddToCart}
         disabled={!inStock || !selectedVariant || !!disabled || isAdding}
         isLoading={isAdding}
-        // Usamos !bg-[#00FFFF] (con !) para forzar el color sobre cualquier estilo base
         className={clx(
-          "w-full md:w-auto font-bold uppercase px-8 py-4 rounded mb-2 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#00FFFF] font-[Poppins,sans-serif] h-14 text-base tracking-wider border-none",
+          "w-full md:w-auto font-bold uppercase px-8 py-4 rounded mb-2 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#00FFFF] font-poppins h-14 text-base tracking-wider border-none",
           !inStock || !selectedVariant
             ? "bg-gray-700 text-gray-400 cursor-not-allowed"
             : "!bg-[#00FFFF] !text-[#101010] hover:!bg-[#00FFFF]/90 hover:shadow-[0_0_15px_rgba(0,255,255,0.4)]"
