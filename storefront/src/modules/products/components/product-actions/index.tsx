@@ -105,6 +105,11 @@ export default function ProductActions({
       countryCode,
     })
 
+    // 👇 AQUÍ ESTÁ LA MAGIA: Avisamos al contador que se actualice
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("cart-updated"))
+    }
+
     setIsAdding(false)
   }
 
