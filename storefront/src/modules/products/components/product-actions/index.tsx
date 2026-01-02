@@ -2,7 +2,7 @@
 
 import { Button } from "@medusajs/ui"
 import { isEqual } from "lodash"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation" // 👈 Importamos useRouter
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import { useIntersection } from "@lib/hooks/use-in-view"
@@ -37,6 +37,7 @@ export default function ProductActions({
   const [options, setOptions] = useState<Record<string, string | undefined>>({})
   const [isAdding, setIsAdding] = useState(false)
   const countryCode = useParams().countryCode as string
+  const router = useRouter() // 👈 Inicializamos el router
 
   // If there is only 1 variant, preselect the options
   useEffect(() => {
@@ -105,10 +106,8 @@ export default function ProductActions({
       countryCode,
     })
 
-    // 👇 AQUÍ ESTÁ LA MAGIA: Avisamos al contador que se actualice
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new Event("cart-updated"))
-    }
+    // 👇 AQUÍ ESTÁ EL CAMBIO: Refrescamos los datos del servidor
+    router.refresh()
 
     setIsAdding(false)
   }
