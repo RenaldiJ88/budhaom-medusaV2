@@ -7,7 +7,6 @@ import BenefitsSection from "@modules/home/components/benefits-section"
 import TransformationVideo from "@modules/home/components/transformation-video"
 import NatureSpiritSection from "@modules/home/components/nature-spirit-section"
 import DesignCarousel from "@modules/home/components/design-carousel"
-import FeaturedProducts from "@modules/home/components/featured-products"
 import MensajeFinal from "@modules/home/components/mensaje-final"
 import NewsletterSection from "@modules/home/components/newsletter-section"
 
@@ -50,20 +49,6 @@ export default async function Home({
       
       <DesignCarousel countryCode={countryCode} />
 
-      {/* 1. MOVÍ LOS PRODUCTOS AQUÍ ⬆️
-          Los sacamos del final para que no corten el diseño oscuro del footer.
-          Ahora están después del carrusel de diseño.
-      */}
-      <div className="bg-white">
-        <ul className="flex flex-col gap-x-6">
-          <FeaturedProducts collections={collections} region={region} />
-        </ul>
-      </div> 
-
-      {/* 2. CONTENEDOR FINAL OSCURO ⬛
-          Agrupamos el Mensaje Final y el Newsletter en un fondo negro (#101010).
-          Al ser lo último de la página, se fusionará perfectamente con el Footer (que también es #101010).
-      */}
       <div className="bg-[#101010]">
         <MensajeFinal />
         <NewsletterSection />
