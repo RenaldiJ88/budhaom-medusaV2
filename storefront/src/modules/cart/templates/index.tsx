@@ -13,12 +13,12 @@ const CartTemplate = ({
   customer: HttpTypes.StoreCustomer | null
 }) => {
   return (
-    // CAMBIO: Fondo negro general y texto blanco
+    // CAMBIO: Fondo negro general
     <div className="py-12 bg-[#101010] min-h-screen text-white">
       <div className="content-container" data-testid="cart-container">
         {cart?.items?.length ? (
           <div className="grid grid-cols-1 small:grid-cols-[1fr_360px] gap-x-40">
-            {/* Columna Izquierda: Items */}
+            {/* Columna Izquierda: Items (Fondo Negro Explícito) */}
             <div className="flex flex-col bg-[#101010] py-6 gap-y-6">
               {!customer && (
                 <>
@@ -26,7 +26,7 @@ const CartTemplate = ({
                   <Divider className="bg-gray-800" />
                 </>
               )}
-              {/* CORREGIDO: Ya no pasamos 'region', solo 'items' */}
+              {/* Le pasamos solo items, ya que quitamos region antes para evitar errores */}
               <ItemsTemplate items={cart?.items} />
             </div>
             

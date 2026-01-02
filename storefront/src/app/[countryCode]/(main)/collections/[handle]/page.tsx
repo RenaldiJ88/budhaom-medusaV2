@@ -59,18 +59,18 @@ export default async function CollectionPage({ params, searchParams }: Props) {
 
   const products = response.products
   
-  // 🟢 CORRECCIÓN ERROR TYPE: Convertimos explícitamente a string o null
+  // Extraemos descripción segura o usamos un fallback
   const descriptionText = typeof collection.metadata?.description === 'string' 
     ? collection.metadata.description 
-    : null
+    : "La exploración de la conciencia y la espiritualidad."
 
-  // Seleccionamos el video basado en el handle de la URL
+  // Video correspondiente
   const videoSrc = COLLECTION_VIDEOS[params.handle] || COLLECTION_VIDEOS["default"]
 
   return (
     <div className="bg-[#101010] min-h-screen text-white">
       
-      {/* --- HERO SECTION CON VIDEO --- */}
+      {/* --- HERO SECTION --- */}
       <section className="relative w-full h-screen overflow-hidden">
         <video 
           className="object-cover w-full h-full opacity-70" 
@@ -85,21 +85,20 @@ export default async function CollectionPage({ params, searchParams }: Props) {
         
         <div className="absolute inset-0 bg-black/40 z-0"></div>
 
-        <div className="absolute inset-0 flex flex-col items-center justify-center z-10 px-4">
-          <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-4 text-center drop-shadow-[0_0_10px_rgba(0,0,0,0.8)] font-[Poppins,sans-serif] uppercase tracking-wider">
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-10 px-4 text-center">
+          {/* TÍTULO GRANDE (Estilo Original Restaurado) */}
+          <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-white mb-6 drop-shadow-[0_0_10px_rgba(0,0,0,0.8)] font-[Poppins,sans-serif] uppercase tracking-wider">
             {collection.title}
           </h1>
           
-          {/* Usamos la variable segura 'descriptionText' */}
-          {descriptionText && (
-             <p className="text-xl md:text-2xl text-white text-center max-w-2xl drop-shadow-[0_0_6px_rgba(0,0,0,0.7)] font-[Inter,sans-serif]">
-               {descriptionText}
-             </p>
-          )}
+          {/* DESCRIPCIÓN */}
+          <p className="text-xl md:text-2xl text-gray-200 text-center max-w-2xl drop-shadow-[0_0_6px_rgba(0,0,0,0.7)] font-[Inter,sans-serif] leading-relaxed">
+            {descriptionText}
+          </p>
         </div>
       </section>
 
-      {/* --- GRILLA DE PRODUCTOS (Estilo Neon) --- */}
+      {/* --- GRILLA DE PRODUCTOS --- */}
       <section className="pt-16 pb-32 px-4 sm:px-6 lg:px-8 bg-[#101010]">
         {products && products.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-6 sm:gap-8 lg:gap-6 max-w-7xl mx-auto">
@@ -114,7 +113,7 @@ export default async function CollectionPage({ params, searchParams }: Props) {
                         className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" 
                       />
                     )}
-                    {/* Badge Enigma (Ejemplo) */}
+                    {/* Badge Enigma */}
                     {params.handle === 'enigma' && (
                       <div className="absolute top-3 right-3 z-10 h-16 w-16 rounded-full bg-black/50 p-1.5 backdrop-blur-sm">
                          <img src="/img/logo-enigma-blanco.png" alt="Logo" className="h-full w-full object-contain" />
