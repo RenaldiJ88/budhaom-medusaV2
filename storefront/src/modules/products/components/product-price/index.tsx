@@ -1,5 +1,4 @@
 import { clx } from "@medusajs/ui"
-
 import { getProductPrice } from "@lib/util/get-product-price"
 import { HttpTypes } from "@medusajs/types"
 
@@ -18,17 +17,20 @@ export default function ProductPrice({
   const selectedPrice = variant ? variantPrice : cheapestPrice
 
   if (!selectedPrice) {
-    return <div className="block w-32 h-9 bg-gray-100 animate-pulse" />
+    // Skeleton oscuro para el modo dark
+    return <div className="block w-32 h-9 bg-gray-800 animate-pulse rounded" />
   }
 
   return (
-    <div className="flex flex-col text-ui-fg-base">
+    <div className="flex flex-col text-white font-[Poppins,sans-serif]">
       <span
-        className={clx("text-xl-semi", {
-          "text-ui-fg-interactive": selectedPrice.price_type === "sale",
+        className={clx("text-3xl md:text-4xl font-bold tracking-tight", {
+          // Si está en oferta, lo ponemos en Cyan para resaltar, sino Blanco puro
+          "text-[#00FFFF]": selectedPrice.price_type === "sale",
+          "text-white": selectedPrice.price_type !== "sale",
         })}
       >
-        {!variant && "From "}
+        {!variant && <span className="text-sm font-normal text-gray-400 mr-2 font-[Inter,sans-serif]">Desde</span>}
         <span
           data-testid="product-price"
           data-value={selectedPrice.calculated_price_number}
@@ -36,22 +38,21 @@ export default function ProductPrice({
           {selectedPrice.calculated_price}
         </span>
       </span>
+      
       {selectedPrice.price_type === "sale" && (
-        <>
-          <p>
-            <span className="text-ui-fg-subtle">Original: </span>
-            <span
-              className="line-through"
-              data-testid="original-product-price"
-              data-value={selectedPrice.original_price_number}
-            >
-              {selectedPrice.original_price}
-            </span>
-          </p>
-          <span className="text-ui-fg-interactive">
-            -{selectedPrice.percentage_diff}%
+        <div className="flex items-center gap-2 mt-1 font-[Inter,sans-serif]">
+          <span className="text-gray-500 text-sm">Original: </span>
+          <span
+            className="line-through text-gray-500 text-sm"
+            data-testid="original-product-price"
+            data-value={selectedPrice.original_price_number}
+          >
+            {selectedPrice.original_price}
           </span>
-        </>
+          <span className="text-[#00FFFF] text-sm font-bold ml-1">
+            -{selectedPrice.percentage_diff}% OFF
+          </span>
+        </div>
       )}
     </div>
   )
