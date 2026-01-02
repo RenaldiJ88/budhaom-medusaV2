@@ -7,9 +7,7 @@ import { listRegions } from "@lib/data/regions"
 import { StoreRegion } from "@medusajs/types"
 import SideMenu from "@modules/layout/components/side-menu"
 
-// 👇 1. Definimos que este componente recibe countryCode
 export default async function Nav({ countryCode }: { countryCode: string }) {
-  
   const regions = await listRegions().then((regions: StoreRegion[]) => regions)
   const cart = await retrieveCart().catch(() => null)
 
@@ -18,73 +16,61 @@ export default async function Nav({ countryCode }: { countryCode: string }) {
       <header className="relative h-20 mx-auto duration-200 bg-transparent transition-colors">
         <nav className="flex items-center justify-between px-4 py-6 md:px-8 lg:px-16 w-full h-full">
           
-          {/* --- MENU HAMBURGUESA IZQUIERDA (SideMenu) --- */}
-          {/* Aquí usábamos "ar" fijo, ahora usamos el real */}
-          <div className="flex-1 basis-0 h-full flex items-center">
-             <div className="h-full">
-                <SideMenu regions={regions} countryCode={countryCode} />
-             </div>
-          </div>
-
-          {/* --- LOGO CENTRO --- */}
-          <div className="flex items-center justify-center h-full">
-            <LocalizedClientLink href="/" className="hover:opacity-80 transition-opacity">
+          {/* --- IZQUIERDA: LOGO --- */}
+          <div className="flex-shrink-0">
+            <LocalizedClientLink href="/" className="hover:opacity-80 transition-opacity block">
               <Image 
                 src="/img/budha-logo2.png" 
                 alt="Logo BUDHA.Om" 
                 width={120} 
                 height={64}
                 className="h-16 w-auto object-contain drop-shadow-[0_0_8px_rgba(0,0,0,0.35)]"
+                priority
               />
             </LocalizedClientLink>
           </div>
 
-          {/* --- LINKS CENTRO (Tu menú de escritorio) --- */}
-          <div className="hidden md:flex items-center gap-8 absolute left-1/2 transform -translate-x-1/2">
-             {/* Nota: Si quieres mantener los links centrados visualmente, el logo debería ir a la izquierda o los links no ser absolutos.
-                 En tu diseño original el logo estaba a la izq. Si prefieres logo izq y links centro, descomenta abajo y quita el div del logo de arriba.
-             */}
-          </div>
-          
-          {/* --- MENÚ DE TEXTO (Desktop) --- */}
-          <div className="hidden md:flex items-center gap-8 mr-auto ml-16"> 
-             {/* Ajusta la posición según prefieras */}
+          {/* --- CENTRO: LINKS (Solo Desktop) --- */}
+          <div className="hidden md:flex items-center gap-8 absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2">
             <LocalizedClientLink
               href="/store"
-              className="text-white hover:opacity-80 drop-shadow-[0_0_4px_rgba(0,0,0,0.3)] font-[Inter,sans-serif] text-sm uppercase tracking-widest"
+              className="text-white hover:opacity-80 drop-shadow-[0_0_4px_rgba(0,0,0,0.3)] font-[Inter,sans-serif] text-sm uppercase tracking-widest transition-colors"
             >
               Tienda
             </LocalizedClientLink>
             <LocalizedClientLink
               href="/tecnologia"
-              className="text-white hover:opacity-80 drop-shadow-[0_0_4px_rgba(0,0,0,0.3)] font-[Inter,sans-serif] text-sm uppercase tracking-widest"
+              className="text-white hover:opacity-80 drop-shadow-[0_0_4px_rgba(0,0,0,0.3)] font-[Inter,sans-serif] text-sm uppercase tracking-widest transition-colors"
             >
               Tecnología Cuántica
             </LocalizedClientLink>
             <LocalizedClientLink
               href="/filosofia"
-              className="text-white hover:opacity-80 drop-shadow-[0_0_4px_rgba(0,0,0,0.3)] font-[Inter,sans-serif] text-sm uppercase tracking-widest"
+              className="text-white hover:opacity-80 drop-shadow-[0_0_4px_rgba(0,0,0,0.3)] font-[Inter,sans-serif] text-sm uppercase tracking-widest transition-colors"
             >
               Filosofía
             </LocalizedClientLink>
             <LocalizedClientLink
               href="/contacto"
-              className="text-white hover:opacity-80 drop-shadow-[0_0_4px_rgba(0,0,0,0.3)] font-[Inter,sans-serif] text-sm uppercase tracking-widest"
+              className="text-white hover:opacity-80 drop-shadow-[0_0_4px_rgba(0,0,0,0.3)] font-[Inter,sans-serif] text-sm uppercase tracking-widest transition-colors"
             >
               Contacto
             </LocalizedClientLink>
           </div>
 
-          {/* --- CARRITO DERECHA --- */}
-          <div className="flex items-center gap-x-6 h-full flex-1 basis-0 justify-end">
-            <Suspense
-              fallback={
-                <div className="text-white">Cart (0)</div>
-              }
-            >
+          {/* --- DERECHA: MENU MOBILE + CARRITO --- */}
+          <div className="flex items-center gap-4">
+            {/* Menú Hamburguesa (Solo Mobile) */}
+            <div className="md:hidden">
+               <SideMenu regions={regions} countryCode={countryCode} />
+            </div>
+
+            {/* Carrito (Siempre visible) */}
+            <Suspense fallback={<div className="w-6 h-6" />}>
               <NavClient cart={cart} collections={null} />
             </Suspense>
           </div>
+
         </nav>
       </header>
     </div>
