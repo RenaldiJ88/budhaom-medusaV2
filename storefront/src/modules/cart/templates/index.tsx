@@ -1,53 +1,52 @@
-import repeat from "@lib/util/repeat"
+import ItemsTemplate from "./items"
+import Summary from "./summary"
+import EmptyCartMessage from "../components/empty-cart-message"
+import SignInPrompt from "../components/sign-in-prompt"
+import Divider from "@modules/common/components/divider"
 import { HttpTypes } from "@medusajs/types"
-import { Table } from "@medusajs/ui"
 
-import Item from "@modules/cart/components/item"
-import SkeletonLineItem from "@modules/skeletons/components/skeleton-line-item"
-
-type ItemsTemplateProps = {
-  items?: HttpTypes.StoreCartLineItem[]
-}
-
-const ItemsTemplate = ({ items }: ItemsTemplateProps) => {
+const CartTemplate = ({
+  cart,
+  customer,
+}: {
+  cart: HttpTypes.StoreCart | null
+  customer: HttpTypes.StoreCustomer | null
+}) => {
   return (
-    <div>
-      <div className="pb-3 flex items-center border-b border-gray-800 mb-4">
-        <h2 className="text-gray-400 font-inter text-sm uppercase tracking-widest">
-          Detalle de Compra
-        </h2>
+    // IMPORTANTE: min-h-screen y bg-[#101010] para toda la página
+    <div className="py-20 bg-[#101010] min-h-screen text-white w-full">
+      <div className="content-container" data-testid="cart-container">
+        {cart?.items?.length ? (
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-12">
+            
+            {/* Columna Izquierda: Items */}
+            <div className="flex flex-col gap-y-6">
+              {!customer && (
+                <>
+                  <SignInPrompt />
+                  <Divider className="border-gray-800" />
+                </>
+              )}
+              <ItemsTemplate items={cart?.items} />
+            </div>
+            
+            {/* Columna Derecha: Resumen */}
+            <div className="relative">
+              <div className="flex flex-col gap-y-8 sticky top-24">
+                {cart && cart.region && (
+                  <Summary cart={cart as any} />
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex justify-center items-center h-[50vh]">
+            <EmptyCartMessage />
+          </div>
+        )}
       </div>
-      
-      <Table className="bg-transparent">
-        <Table.Header className="border-t-0 border-b border-gray-800">
-          <Table.Row className="text-white hover:bg-transparent bg-transparent txt-medium-plus border-b-0 font-inter">
-            <Table.HeaderCell className="!pl-0 text-gray-400 font-normal">Item</Table.HeaderCell>
-            <Table.HeaderCell></Table.HeaderCell>
-            <Table.HeaderCell className="text-gray-400 font-normal">Quantity</Table.HeaderCell>
-            <Table.HeaderCell className="hidden small:table-cell text-gray-400 font-normal">
-              Price
-            </Table.HeaderCell>
-            <Table.HeaderCell className="!pr-0 text-right text-gray-400 font-normal">
-              Total
-            </Table.HeaderCell>
-          </Table.Row>
-        </Table.Header>
-        <Table.Body className="border-t-0 border-b-0">
-          {items
-            ? items
-                .sort((a, b) => {
-                  return (a.created_at ?? "") > (b.created_at ?? "") ? -1 : 1
-                })
-                .map((item) => {
-                  return <Item key={item.id} item={item} />
-                })
-            : repeat(5).map((i) => {
-                return <SkeletonLineItem key={i} />
-              })}
-        </Table.Body>
-      </Table>
     </div>
   )
 }
 
-export default ItemsTemplate
+export default CartTemplate
