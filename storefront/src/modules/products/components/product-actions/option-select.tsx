@@ -23,9 +23,11 @@ const OptionSelect: React.FC<OptionSelectProps> = ({
 
   return (
     <div className="flex flex-col gap-y-3">
-      <span className="text-sm">Select {title}</span>
+      <span className="text-sm text-gray-400 font-[Inter,sans-serif] uppercase tracking-wide">
+        Seleccionar {title}
+      </span>
       <div
-        className="flex flex-wrap justify-between gap-2"
+        className="flex flex-wrap gap-3"
         data-testid={dataTestId}
       >
         {filteredOptions?.map((v) => {
@@ -34,11 +36,16 @@ const OptionSelect: React.FC<OptionSelectProps> = ({
               onClick={() => updateOption(option.title ?? "", v ?? "")}
               key={v}
               className={clx(
-                "border-ui-border-base bg-ui-bg-subtle border text-small-regular h-10 rounded-rounded p-2 flex-1 ",
+                "h-12 min-w-[3rem] px-4 rounded border font-semibold text-sm transition-all duration-200 uppercase",
                 {
-                  "border-ui-border-interactive": v === current,
-                  "hover:shadow-elevation-card-rest transition-shadow ease-in-out duration-150":
-                    v !== current,
+                  // ESTILO SELECCIONADO: Cyan, texto negro
+                  "border-[#00FFFF] bg-[#00FFFF] text-black shadow-[0_0_10px_rgba(0,255,255,0.4)]": v === current,
+                  
+                  // ESTILO NO SELECCIONADO: Fondo Negro, texto blanco
+                  "border-gray-600 bg-[#1a1a1a] text-white hover:border-gray-400": v !== current,
+                  
+                  // ESTILO DESHABILITADO
+                  "opacity-50 cursor-not-allowed bg-gray-800": disabled,
                 }
               )}
               disabled={disabled}
