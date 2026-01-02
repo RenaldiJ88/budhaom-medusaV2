@@ -104,7 +104,7 @@ export default function ProductActions({
         </div>
       )}
 
-      {/* PRECIO (Se renderiza desde ProductPrice, ver archivo abajo) */}
+      {/* PRECIO */}
       <ProductPrice product={product} variant={selectedVariant} />
 
       {/* SELECTOR DE CANTIDAD */}
@@ -136,11 +136,12 @@ export default function ProductActions({
         onClick={handleAddToCart}
         disabled={!inStock || !selectedVariant || !!disabled || isAdding}
         isLoading={isAdding}
+        // Usamos !bg-[#00FFFF] (con !) para forzar el color sobre cualquier estilo base
         className={clx(
-          "w-full md:w-auto font-bold uppercase px-8 py-4 rounded mb-2 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#00FFFF] font-[Poppins,sans-serif] h-14 text-base tracking-wider",
+          "w-full md:w-auto font-bold uppercase px-8 py-4 rounded mb-2 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#00FFFF] font-[Poppins,sans-serif] h-14 text-base tracking-wider border-none",
           !inStock || !selectedVariant
             ? "bg-gray-700 text-gray-400 cursor-not-allowed"
-            : "bg-[#00FFFF] text-[#101010] hover:bg-[#00FFFF]/90 hover:shadow-[0_0_15px_rgba(0,255,255,0.4)]"
+            : "!bg-[#00FFFF] !text-[#101010] hover:!bg-[#00FFFF]/90 hover:shadow-[0_0_15px_rgba(0,255,255,0.4)]"
         )}
       >
         {!selectedVariant
