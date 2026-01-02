@@ -28,18 +28,29 @@ const Summary = ({ cart }: SummaryProps) => {
   const step = getCheckoutStep(cart)
 
   return (
-    <div className="flex flex-col gap-y-4">
-      <Heading level="h2" className="text-[2rem] leading-[2.75rem]">
-        Summary
+    // CAMBIO: Estilo tarjeta oscura (bg-[#141414]) con bordes sutiles
+    <div className="flex flex-col gap-y-4 bg-[#141414] p-6 rounded-xl border border-white/10 shadow-lg">
+      <Heading level="h2" className="text-[2rem] leading-[2.75rem] text-white font-[Poppins,sans-serif]">
+        Resumen
       </Heading>
+      
       <DiscountCode cart={cart} />
-      <Divider />
+      
+      {/* CAMBIO: Divider más oscuro para que no brille tanto */}
+      <Divider className="bg-gray-800" />
+      
       <CartTotals totals={cart} />
+      
       <LocalizedClientLink
         href={"/checkout?step=" + step}
         data-testid="checkout-button"
       >
-        <Button className="w-full h-10">Go to checkout</Button>
+        {/* CAMBIO: Botón Cyan (#00FFFF) con texto negro y hover */}
+        <Button 
+          className="w-full h-12 bg-[#00FFFF] text-[#101010] font-bold uppercase tracking-wider hover:bg-[#00FFFF]/90 hover:scale-[1.02] transition-all rounded-lg border-none"
+        >
+          Iniciar Compra
+        </Button>
       </LocalizedClientLink>
     </div>
   )
