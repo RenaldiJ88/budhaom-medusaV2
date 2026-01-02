@@ -21,14 +21,14 @@ export default function ProductPrice({
   }
 
   return (
-    <div className="flex flex-col text-white font-[Poppins,sans-serif]">
+    <div className="flex flex-col text-white font-poppins">
       <span
         className={clx("text-3xl md:text-4xl font-bold tracking-tight", {
           "text-[#00FFFF]": selectedPrice.price_type === "sale",
           "text-white": selectedPrice.price_type !== "sale",
         })}
       >
-        {/* Eliminamos el texto "Desde" aquí */}
+        {/* Precio Limpio */}
         <span
           data-testid="product-price"
           data-value={selectedPrice.calculated_price_number}
@@ -38,7 +38,7 @@ export default function ProductPrice({
       </span>
       
       {selectedPrice.price_type === "sale" && (
-        <div className="flex items-center gap-2 mt-1 font-[Inter,sans-serif]">
+        <div className="flex items-center gap-2 mt-1 font-inter">
           <span className="text-gray-500 text-sm">Original: </span>
           <span
             className="line-through text-gray-500 text-sm"
