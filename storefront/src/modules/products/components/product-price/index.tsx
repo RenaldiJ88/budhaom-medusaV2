@@ -17,7 +17,6 @@ export default function ProductPrice({
   const selectedPrice = variant ? variantPrice : cheapestPrice
 
   if (!selectedPrice) {
-    // Skeleton oscuro para el modo dark
     return <div className="block w-32 h-9 bg-gray-800 animate-pulse rounded" />
   }
 
@@ -25,12 +24,11 @@ export default function ProductPrice({
     <div className="flex flex-col text-white font-[Poppins,sans-serif]">
       <span
         className={clx("text-3xl md:text-4xl font-bold tracking-tight", {
-          // Si está en oferta, lo ponemos en Cyan para resaltar, sino Blanco puro
           "text-[#00FFFF]": selectedPrice.price_type === "sale",
           "text-white": selectedPrice.price_type !== "sale",
         })}
       >
-        {!variant && <span className="text-sm font-normal text-gray-400 mr-2 font-[Inter,sans-serif]">Desde</span>}
+        {/* Eliminamos el texto "Desde" aquí */}
         <span
           data-testid="product-price"
           data-value={selectedPrice.calculated_price_number}
